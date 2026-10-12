@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChartLens — free chart analyzer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <h1>ChartLens</h1>
+    <p class="muted">Free chart analyzer — live candles, transparent rule-based signals, scalp &amp; swing modes. Every signal shows its reasons. Research &amp; education only — not financial advice.</p>
+  </div>
+  <div class="pills">
+    <div class="livepill"><span class="dot"></span><span id="asof">connecting…</span></div>
+    <div class="livepill" id="pxpill">—</div>
+  </div>
+</header>
+
+<nav class="markets" id="markets" aria-label="markets"></nav>
+
+<main class="layout">
+  <section class="chartpanel">
+    <div class="controls">
+      <div class="syms" id="syms"></div>
+      <div class="tfs" id="tfs"></div>
+      <div class="modes" id="modes">
+        <button data-mode="scalp" class="on">Scalp</button>
+        <button data-mode="swing">Swing</button>
+      </div>
+    </div>
+    <div class="chartwrap"><canvas id="chart"></canvas><span class="spanpill" id="spanpill"></span></div>
+    <div class="legend" id="legend"></div>
+  </section>
+
+  <aside class="sidepanel">
+    <section class="card" id="signalcard">
+      <h2>Signal</h2>
+      <div id="signal">Loading live data…</div>
+    </section>
+    <section class="card">
+      <h2>Key levels</h2>
+      <div id="levels">—</div>
+    </section>
+    <section class="card">
+      <h2>Risk calculator</h2>
+      <div class="riskgrid">
+        <label>Account $<input id="acct" type="number" value="100" min="1" step="1"></label>
+        <label>Risk %<input id="riskpct" type="number" value="1" min="0.1" max="10" step="0.1"></label>
+      </div>
+      <div id="riskout">—</div>
+    </section>
+  </aside>
+</main>
+
+<section class="wide">
+  <div class="card">
+    <h2>Chart screenshot analysis</h2>
+    <p class="muted">Upload any chart screenshot. With your free Gemini key (stored only in this browser) you get vision-AI readouts; without it you still get the full rule-based workup above on live data.</p>
+    <div class="uploadrow">
+      <input type="file" id="shot" accept="image/*">
+      <input type="password" id="gkey" placeholder="Gemini API key (optional, stays in your browser)">
+      <button id="analyze">Analyze screenshot</button>
+    </div>
+    <div class="shotwrap"><img id="shotprev" alt=""><pre id="shotout"></pre></div>
+  </div>
+</section>
+
+<section class="wide">
+  <div class="card">
+    <h2>Trade journal</h2>
+    <p class="muted">Stored only in this browser. Log setups to review what worked.</p>
+    <div class="jform">
+      <input id="j_sym" placeholder="Symbol">
+      <select id="j_dir"><option>LONG</option><option>SHORT</option></select>
+      <input id="j_entry" type="number" step="any" placeholder="Entry">
+      <input id="j_stop" type="number" step="any" placeholder="Stop">
+      <input id="j_tgt" type="number" step="any" placeholder="Target">
+      <button id="j_add">Log trade</button>
+    </div>
+    <div id="jstats"></div>
+    <table id="jtable"><thead><tr><th>Symbol</th><th>Dir</th><th>Entry</th><th>Stop</th><th>Target</th><th>Result</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
+</section>
+
+<footer>
+  <p>ChartLens is a research &amp; education tool. <b>Not financial advice.</b> Signals are deterministic technical-analysis rules computed on live market data — they describe the chart, they do not predict the future. Crypto data: Coinbase. Stocks &amp; forex: Yahoo Finance. Data refreshes every 15 minutes; timestamps shown on page.</p>
+  <p class="muted" id="srcs"></p>
+</footer>
+<script src="app.js"></script>
+</body>
+</html>
