@@ -38,18 +38,31 @@ function buildMarkets() {
 }
 function buildSyms() {
   const el = $('syms'); el.innerHTML = '';
-  for (const [id, s] of symbolsOf(state.market)) {
+  const syms = symbolsOf(state.market);
+  // quick picks (first 8) — the full universe is in the lookup box
+  for (const [id, s] of syms.slice(0, 8)) {
     const b = document.createElement('button');
     b.textContent = s.name;
     b.className = state.symbol === id ? 'on' : '';
     b.onclick = () => selectSymbol(id);
     el.appendChild(b);
   }
+  if (syms.length > 8) {
+    const more = document.createElement('span');
+    more.className = 'muted';
+    more.style.cssText = 'font-size:12px;align-self:center';
+    more.textContent = `+${syms.length - 8} more — use lookup ↑`;
+    el.appendChild(more);
+  }
   const tfs = $('tfs'); tfs.innerHTML = '';
+  const avail = state.data.symbols[state.symbol]?.tfs || {};
   for (const tf of ['5m', '15m', '1h', '1d']) {
     const b = document.createElement('button');
     b.textContent = tf;
     b.className = state.tf === tf ? 'on' : '';
+    b.disabled = !avail[tf];
+    b.style.opacity = avail[tf] ? 1 : 0.35;
+    b.title = avail[tf] ? '' : 'not published for this symbol';
     b.onclick = () => { state.tf = tf; render(); };
     tfs.appendChild(b);
   }
@@ -58,6 +71,7 @@ function selectSymbol(id) {
   state.symbol = id;
   const s = state.data.symbols[id];
   if (s && s.market !== state.market) { state.market = s.market; buildMarkets(); }
+  if (s && !s.tfs[state.tf]) state.tf = '15m'; // extended symbols skip 5m
   buildSyms();
   render();
 }
@@ -276,14 +290,23 @@ function drawChart(bars, sig) {
   const off = Math.max(0, Math.min(state.view.off, maxN - N));
   const startIdx = maxN - N - off;
   const bs = bars.slice(startIdx, startIdx + N);
+  // ATR volatility cone: projects the next CONE bars as ±ATR·√k. A volatility
+  // envelope, not a prediction — it shows where price *could* go, not where it will.
+  const CONE = 24;
+  const cone = (sig && !sig.error && sig.atr != null && sig.atr > 0)
+    ? { px: sig.px, atr: sig.atr, n: CONE } : null;
   const pad = { l: 8, r: 64, t: 10, b: 44 };
   let lo = Infinity, hi = -Infinity;
   for (const b of bs) { lo = Math.min(lo, b.l); hi = Math.max(hi, b.h); }
-  // include indicator/zone extremes
+  // include indicator/zone/cone extremes
   const cl = closes(bs);
   const e12 = ema(cl, 12), e26 = ema(cl, 26), bb = bollinger(cl);
   for (let i = 0; i < bs.length; i++) {
     for (const v of [e12[i], e26[i], bb[i]?.up, bb[i]?.lo]) if (v != null) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+  }
+  if (cone) {
+    const w = cone.atr * Math.sqrt(cone.n);
+    lo = Math.min(lo, cone.px - w); hi = Math.max(hi, cone.px + w);
   }
   const zones = [];
   if (sig && !sig.error) {
@@ -295,7 +318,7 @@ function drawChart(bars, sig) {
   }
   for (const z of zones) { lo = Math.min(lo, z.v); hi = Math.max(hi, z.v); }
   const rg = Math.max(hi - lo, 1e-9); lo -= rg * 0.06; hi += rg * 0.06;
-  const cw = (W - pad.l - pad.r) / N;
+  const cw = (W - pad.l - pad.r) / (N + CONE);
   const X = (i) => pad.l + (i + 0.5) * cw;
   const Y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
   // gridlines + price labels
@@ -334,6 +357,30 @@ function drawChart(bars, sig) {
     ctx.stroke();
   };
   emaLine(e12, '#f59e0b'); emaLine(e26, '#4f46e5');
+  // volatility cone: shaded ±ATR·√k envelope over the next CONE slots
+  if (cone) {
+    ctx.beginPath();
+    for (let k = 0; k <= cone.n; k++) {
+      const x = X(N - 1 + k), y = Y(cone.px + cone.atr * Math.sqrt(k));
+      k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    for (let k = cone.n; k >= 0; k--) ctx.lineTo(X(N - 1 + k), Y(cone.px - cone.atr * Math.sqrt(k)));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(79,70,229,.08)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(79,70,229,.45)'; ctx.lineWidth = 1.2; ctx.setLineDash([4, 3]);
+    for (const sgn of [1, -1]) {
+      ctx.beginPath();
+      for (let k = 0; k <= cone.n; k++) {
+        const x = X(N - 1 + k), y = Y(cone.px + sgn * cone.atr * Math.sqrt(k));
+        k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#4f46e5'; ctx.font = '600 10px system-ui';
+    ctx.fillText('ATR cone', X(N - 1 + 2), Y(cone.px + cone.atr * Math.sqrt(cone.n)) - 4);
+  }
   // zones
   ctx.font = '600 10px system-ui';
   for (const z of zones) {
@@ -371,7 +418,7 @@ function drawChart(bars, sig) {
   }
   const isLive = state.wsLive && state.data.symbols[state.symbol]?.market === 'crypto';
   $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset`;
-  $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>`;
+  $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>`;
 }
 
 /* ---------------- mouse: wheel zoom, drag pan, double-click reset ---------------- */
@@ -401,6 +448,34 @@ function drawChart(bars, sig) {
 })();
 
 /* ---------------- panels ---------------- */
+/* ---------------- stock lookup ---------------- */
+(function initSearch() {
+  const inp = $('search'), box = $('searchres');
+  const hide = () => { box.style.display = 'none'; box.innerHTML = ''; };
+  inp.addEventListener('input', () => {
+    const q = inp.value.trim().toLowerCase();
+    if (!state.data || q.length < 1) { hide(); return; }
+    const hits = Object.entries(state.data.symbols)
+      .filter(([id, s]) => id.toLowerCase().includes(q) || s.name.toLowerCase().includes(q))
+      .slice(0, 8);
+    if (!hits.length) { hide(); return; }
+    box.innerHTML = '';
+    for (const [id, s] of hits) {
+      const d = document.createElement('div');
+      d.innerHTML = `<span class="sym">${id.replace('=X', '')}</span><span class="nm">${s.name} · ${s.market}</span>`;
+      d.onclick = () => { selectSymbol(id); inp.value = ''; hide(); };
+      box.appendChild(d);
+    }
+    box.style.display = 'block';
+  });
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      const first = box.querySelector('div');
+      if (first) first.click();
+    } else if (e.key === 'Escape') hide();
+  });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.searchwrap')) hide(); });
+})();
 /* ---------------- live tape + signal feed ---------------- */
 function tapeChange(id) {
   const s = state.data.symbols[id];
@@ -414,9 +489,10 @@ function renderTape() {
   for (const [id, s] of Object.entries(state.data.symbols)) {
     const c = tapeChange(id);
     if (!c) continue;
+    const isLive = s.market === 'crypto' && state.wsLive;
     const d = document.createElement('div');
     d.className = 'tapeitem'; d.id = 'tape-' + id;
-    d.innerHTML = `<b>${s.name}</b> <span class="px">${fmtP(id, c.px)}</span> <span class="${c.chg >= 0 ? 'up' : 'dn'}">${c.chg >= 0 ? '+' : ''}${c.chg.toFixed(2)}%</span>`;
+    d.innerHTML = `<b>${s.name}</b> <span class="px">${fmtP(id, c.px)}</span> <span class="${c.chg >= 0 ? 'up' : 'dn'}">${c.chg >= 0 ? '+' : ''}${c.chg.toFixed(2)}%</span><span class="tapetag ${isLive ? 'live' : 'delayed'}">${isLive ? 'LIVE' : '15-MIN'}</span>`;
     d.onclick = () => selectSymbol(id);
     el.appendChild(d);
   }
@@ -632,6 +708,26 @@ document.querySelectorAll('#modes button').forEach((b) => {
 });
 window.addEventListener('resize', () => drawChart(state.liveBars, analyze(state.liveBars, state.mode)));
 (async () => {
-  try { await loadData(); connectWS(); jRender(); setInterval(loadData, 15 * 60 * 1000); }
+  try { await loadData(); connectWS(); jRender(); setInterval(pollData, 60000); }
   catch (e) { $('asof').textContent = 'waiting for first data publish…'; }
 })();
+// Poll for a fresh publish every 60s; rebase silently (keeps zoom) when it arrives.
+async function pollData() {
+  try {
+    const r = await fetch(DATA_URL + '?t=' + Date.now());
+    if (!r.ok) return;
+    const d = await r.json();
+    if (!d.generated || !state.data || d.generated === state.data.generated) return;
+    state.data = d;
+    const g = new Date(d.generated);
+    $('asof').textContent = 'data · ' + g.toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }) + ' PT';
+    const nb = getBars();
+    if (nb.length) {
+      state.bars = nb;
+      state.liveBars = nb.map((b) => ({ ...b }));
+      const sig = analyze(state.liveBars, state.mode);
+      drawChart(state.liveBars, sig);
+      renderSignal(sig); renderLevels(sig); renderRisk(sig); renderFeed(); renderTape();
+    } else renderTape();
+  } catch {}
+}
