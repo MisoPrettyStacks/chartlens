@@ -501,6 +501,20 @@ function tapeTick(id, price) {
   const d = $('tape-' + id);
   if (d) { const px = d.querySelector('.px'); if (px) px.textContent = fmtP(id, price); }
 }
+// Re-label tape chips + chart pill when the socket connects or drops, so the
+// LIVE tag reflects reality instead of whatever state existed at first render.
+function refreshTapeTags() {
+  if (!state.data) return;
+  for (const [id, s] of Object.entries(state.data.symbols)) {
+    const d = $('tape-' + id);
+    if (!d) continue;
+    const tag = d.querySelector('.tapetag');
+    if (!tag) continue;
+    const isLive = s.market === 'crypto' && state.wsLive;
+    tag.className = 'tapetag ' + (isLive ? 'live' : 'delayed');
+    tag.textContent = isLive ? 'LIVE' : '15-MIN';
+  }
+}
 function renderFeed() {
   const el = $('feed');
   const markers = findMarkers(state.liveBars, state.mode);
@@ -675,6 +689,7 @@ function connectWS() {
   const open = () => {
     const retry = () => {
       state.wsLive = false;
+      refreshTapeTags();
       setTimeout(open, Math.min(delay, 30000));
       delay *= 2;
     };
@@ -682,6 +697,7 @@ function connectWS() {
     try { ws = new WebSocket('wss://ws-feed.exchange.coinbase.com'); } catch { retry(); return; }
     ws.onopen = () => {
       delay = 2000; state.wsLive = true;
+      refreshTapeTags();
       ws.send(JSON.stringify({ type: 'subscribe', channels: [{ name: 'matches', product_ids: CRYPTO_IDS }] }));
     };
     ws.onmessage = (ev) => {
