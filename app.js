@@ -537,7 +537,8 @@ function renderSignal(sig) {
     <div class="score">rule score ${sig.score > 0 ? '+' : ''}${sig.score} · conviction ${sig.conviction}% · ${state.mode} mode · ${state.tf}</div>
     <ul class="reasons">${sig.reasons.filter((r) => r.pts !== 0 || true).map((r) =>
       `<li>${r.pts > 0 ? '▲' : r.pts < 0 ? '▼' : '·'} ${r.txt}</li>`).join('')}</ul>
-    ${sig.bias === 'NEUTRAL' ? '<p class="muted">No trade: signals conflict. Cash is a position.</p>' : ''}`;
+    ${sig.bias === 'NEUTRAL' ? '<p class="muted">No trade: signals conflict. Cash is a position.</p>' : ''}
+    <div class="sigwarn">⚠️ Not financial advice — a rule-based chart readout, not a recommendation.</div>`;
 }
 function renderLevels(sig) {
   const el = $('levels');
