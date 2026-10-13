@@ -154,62 +154,73 @@ function swingLevels(bars, lookback = 120, k = 2) {
 }
 
 /* ---------------- signal engine (rule-based, transparent) ---------------- */
-function analyze(bars, mode) {
-  const n = bars.length;
-  if (n < 60) return { error: `Insufficient data — only ${n} candles (need 60+).` };
-  const cl = closes(bars), last = bars[n - 1], px = last.c;
-  const e12 = ema(cl, 12), e26 = ema(cl, 26), e50 = ema(cl, 50);
-  const r = rsi(cl), mc = macd(cl), bb = bollinger(cl), av = atr(bars);
-  const i = n - 1;
+// Indicators computed ONCE per series; scoring is then O(1) per bar, so the
+// engine can be replayed over history for BUY/SELL markers honestly.
+function computeAll(bars) {
+  const cl = closes(bars);
+  return { cl, e12: ema(cl, 12), e26: ema(cl, 26), e50: ema(cl, 50),
+           rsi: rsi(cl), macd: macd(cl), bb: bollinger(cl), atr: atr(bars) };
+}
+function scoreAt(bars, ind, i, wantReasons) {
+  const sym = state.symbol, px = bars[i].c, last = bars[i];
   const reasons = [];
   let score = 0;
-  const add = (pts, txt) => { score += pts; reasons.push({ pts, txt }); };
-
-  if (e50[i] != null) add(px > e50[i] ? 1 : -1, `Price ${fmtP(state.symbol, px)} ${px > e50[i] ? 'above' : 'below'} EMA50 ${fmtP(state.symbol, e50[i])} — ${px > e50[i] ? 'uptrend' : 'downtrend'}`);
-  if (e12[i] != null && e26[i] != null) add(e12[i] > e26[i] ? 1 : -1, `EMA12 ${e12[i] > e26[i] ? 'above' : 'below'} EMA26 — momentum ${e12[i] > e26[i] ? 'up' : 'down'}`);
-  if (r[i] != null) {
-    const v = r[i];
+  const add = (pts, txt) => { score += pts; if (wantReasons) reasons.push({ pts, txt }); };
+  if (ind.e50[i] != null) add(px > ind.e50[i] ? 1 : -1, `Price ${fmtP(sym, px)} ${px > ind.e50[i] ? 'above' : 'below'} EMA50 ${fmtP(sym, ind.e50[i])} — ${px > ind.e50[i] ? 'uptrend' : 'downtrend'}`);
+  if (ind.e12[i] != null && ind.e26[i] != null) add(ind.e12[i] > ind.e26[i] ? 1 : -1, `EMA12 ${ind.e12[i] > ind.e26[i] ? 'above' : 'below'} EMA26 — momentum ${ind.e12[i] > ind.e26[i] ? 'up' : 'down'}`);
+  if (ind.rsi[i] != null) {
+    const v = ind.rsi[i];
     if (v < 30) add(2, `RSI(14) ${v.toFixed(1)} — oversold`);
     else if (v > 70) add(-2, `RSI(14) ${v.toFixed(1)} — overbought`);
     else if (v < 40) add(1, `RSI(14) ${v.toFixed(1)} — soft`);
     else if (v > 60) add(-1, `RSI(14) ${v.toFixed(1)} — firm`);
     else add(0, `RSI(14) ${v.toFixed(1)} — neutral`);
   }
-  if (mc.hist[i] != null) {
-    add(mc.hist[i] > 0 ? 1 : -1, `MACD histogram ${mc.hist[i] > 0 ? 'positive' : 'negative'} (${mc.hist[i].toFixed(dec(state.symbol) + 1)})`);
-    if (mc.hist[i - 1] != null && ((mc.hist[i] > 0) !== (mc.hist[i - 1] > 0)))
-      add(mc.hist[i] > 0 ? 1 : -1, `MACD histogram just flipped ${mc.hist[i] > 0 ? 'up' : 'down'}`);
+  if (ind.macd.hist[i] != null) {
+    add(ind.macd.hist[i] > 0 ? 1 : -1, `MACD histogram ${ind.macd.hist[i] > 0 ? 'positive' : 'negative'} (${ind.macd.hist[i].toFixed(dec(sym) + 1)})`);
+    if (ind.macd.hist[i - 1] != null && ((ind.macd.hist[i] > 0) !== (ind.macd.hist[i - 1] > 0)))
+      add(ind.macd.hist[i] > 0 ? 1 : -1, `MACD histogram just flipped ${ind.macd.hist[i] > 0 ? 'up' : 'down'}`);
   }
-  if (bb[i]) {
-    const pctB = (px - bb[i].lo) / Math.max(bb[i].up - bb[i].lo, 1e-12);
+  if (ind.bb[i]) {
+    const pctB = (px - ind.bb[i].lo) / Math.max(ind.bb[i].up - ind.bb[i].lo, 1e-12);
     if (pctB < 0.15) add(1, `%B ${pctB.toFixed(2)} — pressing lower Bollinger band`);
     else if (pctB > 0.85) add(-1, `%B ${pctB.toFixed(2)} — pressing upper Bollinger band`);
     else add(0, `%B ${pctB.toFixed(2)} — mid-band`);
   }
-  // breakout of recent range
-  const hh = Math.max(...bars.slice(-21, -1).map((b) => b.h));
-  const ll = Math.min(...bars.slice(-21, -1).map((b) => b.l));
-  if (px > hh) {
-    let pts = 1;
-    const vols = bars.slice(-21).map((b) => b.v).filter((v) => v != null);
-    if (vols.length > 10) {
-      const avg = vols.slice(0, -1).reduce((a, b) => a + b, 0) / (vols.length - 1);
-      if (last.v > avg * 1.5) { pts = 2; add(pts, `Breakout above 20-bar high ${fmtP(state.symbol, hh)} on ${(last.v / avg).toFixed(1)}× volume`); }
-      else add(pts, `Above 20-bar high ${fmtP(state.symbol, hh)} — thin volume, weaker`);
-    } else add(pts, `Breakout above 20-bar high ${fmtP(state.symbol, hh)}`);
-  } else if (px < ll) {
-    let pts = -1;
-    const vols = bars.slice(-21).map((b) => b.v).filter((v) => v != null);
-    if (vols.length > 10) {
-      const avg = vols.slice(0, -1).reduce((a, b) => a + b, 0) / (vols.length - 1);
-      if (last.v > avg * 1.5) { pts = -2; add(pts, `Breakdown below 20-bar low ${fmtP(state.symbol, ll)} on ${(last.v / avg).toFixed(1)}× volume`); }
-      else add(pts, `Below 20-bar low ${fmtP(state.symbol, ll)} — thin volume, weaker`);
-    } else add(pts, `Breakdown below 20-bar low ${fmtP(state.symbol, ll)}`);
+  // breakout of recent 20-bar range (window ends at bar i)
+  if (i >= 22) {
+    const win = bars.slice(i - 21, i);
+    const hh = Math.max(...win.map((b) => b.h));
+    const ll = Math.min(...win.map((b) => b.l));
+    if (px > hh) {
+      let pts = 1;
+      const vols = bars.slice(i - 20, i + 1).map((b) => b.v).filter((v) => v != null);
+      if (vols.length > 10) {
+        const avg = vols.slice(0, -1).reduce((a, b) => a + b, 0) / (vols.length - 1);
+        if (last.v > avg * 1.5) { pts = 2; add(pts, `Breakout above 20-bar high ${fmtP(sym, hh)} on ${(last.v / avg).toFixed(1)}× volume`); }
+        else add(pts, `Above 20-bar high ${fmtP(sym, hh)} — thin volume, weaker`);
+      } else add(pts, `Breakout above 20-bar high ${fmtP(sym, hh)}`);
+    } else if (px < ll) {
+      let pts = -1;
+      const vols = bars.slice(i - 20, i + 1).map((b) => b.v).filter((v) => v != null);
+      if (vols.length > 10) {
+        const avg = vols.slice(0, -1).reduce((a, b) => a + b, 0) / (vols.length - 1);
+        if (last.v > avg * 1.5) { pts = -2; add(pts, `Breakdown below 20-bar low ${fmtP(sym, ll)} on ${(last.v / avg).toFixed(1)}× volume`); }
+        else add(pts, `Below 20-bar low ${fmtP(sym, ll)} — thin volume, weaker`);
+      } else add(pts, `Breakdown below 20-bar low ${fmtP(sym, ll)}`);
+    }
   }
-
+  return { score, reasons };
+}
+function analyze(bars, mode) {
+  const n = bars.length;
+  if (n < 60) return { error: `Insufficient data — only ${n} candles (need 60+).` };
+  const ind = computeAll(bars);
+  const i = n - 1, last = bars[i], px = last.c;
+  const { score, reasons } = scoreAt(bars, ind, i, true);
   const bias = score >= 3 ? 'LONG' : score <= -3 ? 'SHORT' : 'NEUTRAL';
   const conviction = Math.min(100, Math.round(Math.abs(score) / 8 * 100));
-  const atrV = av[i];
+  const atrV = ind.atr[i];
   const mult = mode === 'scalp' ? 1.5 : 2.0;
   const lv = swingLevels(bars);
   let entry = px, stop = null, targets = [];
@@ -226,6 +237,26 @@ function analyze(bars, mode) {
     });
   }
   return { bias, score, conviction, reasons, levels: lv, entry, stop, targets, atr: atrV, px, t: last.t };
+}
+// Historical BUY/SELL markers: replay the same rules over past bars.
+// Hysteresis (score must fall back under ±1 before re-arming) prevents spam.
+function findMarkers(bars, mode) {
+  const n = bars.length;
+  if (n < 70) return [];
+  const ind = computeAll(bars);
+  const out = [];
+  let armedLong = true, armedShort = true;
+  for (let i = 60; i < n; i++) {
+    const { score } = scoreAt(bars, ind, i, false);
+    if (score >= 3 && armedLong) {
+      out.push({ i, dir: 'BUY', price: bars[i].c, t: bars[i].t, score });
+      armedLong = false; armedShort = true;
+    } else if (score <= -3 && armedShort) {
+      out.push({ i, dir: 'SELL', price: bars[i].c, t: bars[i].t, score });
+      armedShort = false; armedLong = true;
+    } else if (Math.abs(score) < 1) { armedLong = armedShort = true; }
+  }
+  return out;
 }
 
 /* ---------------- chart ---------------- */
@@ -305,6 +336,22 @@ function drawChart(bars, sig) {
     ctx.fillStyle = z.c;
     ctx.fillText(`${z.label ? z.label + ' ' : ''}${z.v.toFixed(dec(state.symbol))}`, pad.l + 4, y - 4);
   }
+  // BUY/SELL markers from the rule engine's own history
+  const markers = findMarkers(bars, state.mode);
+  const off = bars.length - N;
+  ctx.font = '700 9px system-ui';
+  for (const m of markers) {
+    const vi = m.i - off;
+    if (vi < 0 || vi >= bs.length) continue;
+    const x = X(vi), isBuy = m.dir === 'BUY', col = isBuy ? '#16a34a' : '#dc2626';
+    const y = isBuy ? Y(bs[vi].l) + 14 : Y(bs[vi].h) - 14;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    if (isBuy) { ctx.moveTo(x, y - 7); ctx.lineTo(x - 6, y + 2); ctx.lineTo(x + 6, y + 2); }
+    else { ctx.moveTo(x, y + 7); ctx.lineTo(x - 6, y - 2); ctx.lineTo(x + 6, y - 2); }
+    ctx.closePath(); ctx.fill();
+    ctx.fillText(m.dir, x - 10, isBuy ? y + 12 : y - 10);
+  }
   // time labels
   ctx.fillStyle = '#8a94a8';
   const step = Math.max(1, Math.floor(N / 6));
@@ -320,6 +367,41 @@ function drawChart(bars, sig) {
 }
 
 /* ---------------- panels ---------------- */
+/* ---------------- live tape + signal feed ---------------- */
+function tapeChange(id) {
+  const s = state.data.symbols[id];
+  const bars = s && (s.tfs['1d'] || s.tfs['1h']);
+  if (!bars || bars.length < 2) return null;
+  const last = bars[bars.length - 1][4], prev = bars[bars.length - 2][4];
+  return { px: last, chg: (last - prev) / prev * 100 };
+}
+function renderTape() {
+  const el = $('tape'); el.innerHTML = '';
+  for (const [id, s] of Object.entries(state.data.symbols)) {
+    const c = tapeChange(id);
+    if (!c) continue;
+    const d = document.createElement('div');
+    d.className = 'tapeitem'; d.id = 'tape-' + id;
+    d.innerHTML = `<b>${s.name}</b> <span class="px">${fmtP(id, c.px)}</span> <span class="${c.chg >= 0 ? 'up' : 'dn'}">${c.chg >= 0 ? '+' : ''}${c.chg.toFixed(2)}%</span>`;
+    d.onclick = () => selectSymbol(id);
+    el.appendChild(d);
+  }
+}
+function tapeTick(id, price) {
+  const d = $('tape-' + id);
+  if (d) { const px = d.querySelector('.px'); if (px) px.textContent = fmtP(id, price); }
+}
+function renderFeed() {
+  const el = $('feed');
+  const markers = findMarkers(state.bars, state.mode);
+  if (!markers.length) { el.innerHTML = '<span class="muted">No BUY/SELL markers on this timeframe yet.</span>'; return; }
+  const lastC = state.bars[state.bars.length - 1].c;
+  el.innerHTML = markers.slice(-8).reverse().map((m) => {
+    const ret = m.dir === 'BUY' ? (lastC - m.price) / m.price * 100 : (m.price - lastC) / m.price * 100;
+    const t = new Date(m.t * 1000).toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' });
+    return `<div class="feeditem"><span><span class="${m.dir}">${m.dir}</span> ${t}</span><span>${fmtP(state.symbol, m.price)} <span class="${ret >= 0 ? 'win' : 'loss'}">${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%</span></span></div>`;
+  }).join('');
+}
 function render() {
   state.bars = getBars();
   const sig = analyze(state.bars, state.mode);
@@ -327,6 +409,8 @@ function render() {
   renderSignal(sig);
   renderLevels(sig);
   renderRisk(sig);
+  renderTape();
+  renderFeed();
   const s = state.data.symbols[state.symbol];
   const last = state.bars[state.bars.length - 1];
   $('pxpill').innerHTML = s ? `${s.name} <b>${fmtP(state.symbol, last ? last.c : null)}</b>` : '—';
@@ -445,6 +529,9 @@ function connectWS() {
     ws.onmessage = (ev) => {
       try {
         const m = JSON.parse(ev.data);
+        if (m.type === 'ticker' && m.price) {
+          tapeTick(m.product_id, parseFloat(m.price));
+        }
         if (m.type === 'ticker' && m.product_id === state.symbol && m.price) {
           const s = state.data.symbols[state.symbol];
           $('pxpill').innerHTML = `${s.name} <b>${fmtP(state.symbol, parseFloat(m.price))}</b> <span class="muted">live</span>`;
