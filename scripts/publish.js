@@ -4,31 +4,69 @@
 // data: if a fetch fails, that symbol/timeframe is omitted, never faked.
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
+const CORE_TFS = ['5m', '15m', '1h', '1d'];
+const EXT_TFS = ['15m', '1h', '1d']; // extended lookup universe skips 5m (rate-limit friendly)
+
 const SYMBOLS = [
   // crypto — Coinbase public candles
-  { id: 'BTC-USD', market: 'crypto', name: 'Bitcoin', src: 'coinbase' },
-  { id: 'ETH-USD', market: 'crypto', name: 'Ethereum', src: 'coinbase' },
-  { id: 'XRP-USD', market: 'crypto', name: 'XRP', src: 'coinbase' },
-  { id: 'SOL-USD', market: 'crypto', name: 'Solana', src: 'coinbase' },
-  // stocks — Yahoo Finance
-  { id: 'AAPL', market: 'stocks', name: 'Apple', src: 'yahoo' },
-  { id: 'NVDA', market: 'stocks', name: 'Nvidia', src: 'yahoo' },
-  { id: 'TSLA', market: 'stocks', name: 'Tesla', src: 'yahoo' },
-  { id: 'MSFT', market: 'stocks', name: 'Microsoft', src: 'yahoo' },
-  { id: 'AMD', market: 'stocks', name: 'AMD', src: 'yahoo' },
-  { id: 'SPY', market: 'stocks', name: 'S&P 500 ETF', src: 'yahoo' },
+  { id: 'BTC-USD', market: 'crypto', name: 'Bitcoin', src: 'coinbase', tfs: CORE_TFS },
+  { id: 'ETH-USD', market: 'crypto', name: 'Ethereum', src: 'coinbase', tfs: CORE_TFS },
+  { id: 'XRP-USD', market: 'crypto', name: 'XRP', src: 'coinbase', tfs: CORE_TFS },
+  { id: 'SOL-USD', market: 'crypto', name: 'Solana', src: 'coinbase', tfs: CORE_TFS },
+  // stocks — Yahoo Finance (core: full TFs)
+  { id: 'AAPL', market: 'stocks', name: 'Apple', src: 'yahoo', tfs: CORE_TFS },
+  { id: 'NVDA', market: 'stocks', name: 'Nvidia', src: 'yahoo', tfs: CORE_TFS },
+  { id: 'TSLA', market: 'stocks', name: 'Tesla', src: 'yahoo', tfs: CORE_TFS },
+  { id: 'MSFT', market: 'stocks', name: 'Microsoft', src: 'yahoo', tfs: CORE_TFS },
+  { id: 'AMD', market: 'stocks', name: 'AMD', src: 'yahoo', tfs: CORE_TFS },
+  { id: 'SPY', market: 'stocks', name: 'S&P 500 ETF', src: 'yahoo', tfs: CORE_TFS },
+  // stocks — extended lookup universe
+  { id: 'GOOGL', market: 'stocks', name: 'Alphabet', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'AMZN', market: 'stocks', name: 'Amazon', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'META', market: 'stocks', name: 'Meta', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'NFLX', market: 'stocks', name: 'Netflix', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'AVGO', market: 'stocks', name: 'Broadcom', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'CRM', market: 'stocks', name: 'Salesforce', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'ORCL', market: 'stocks', name: 'Oracle', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'PLTR', market: 'stocks', name: 'Palantir', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'COIN', market: 'stocks', name: 'Coinbase', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'MSTR', market: 'stocks', name: 'Strategy', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'JPM', market: 'stocks', name: 'JPMorgan', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'XOM', market: 'stocks', name: 'Exxon', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'WMT', market: 'stocks', name: 'Walmart', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'DIS', market: 'stocks', name: 'Disney', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'NKE', market: 'stocks', name: 'Nike', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'PYPL', market: 'stocks', name: 'PayPal', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'SHOP', market: 'stocks', name: 'Shopify', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'UBER', market: 'stocks', name: 'Uber', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'ABNB', market: 'stocks', name: 'Airbnb', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'SNOW', market: 'stocks', name: 'Snowflake', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'CRWD', market: 'stocks', name: 'CrowdStrike', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'PANW', market: 'stocks', name: 'Palo Alto', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'MRNA', market: 'stocks', name: 'Moderna', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'PFE', market: 'stocks', name: 'Pfizer', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'JNJ', market: 'stocks', name: 'J&J', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'KO', market: 'stocks', name: 'Coca-Cola', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'PEP', market: 'stocks', name: 'PepsiCo', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'MCD', market: 'stocks', name: "McDonald's", src: 'yahoo', tfs: EXT_TFS },
+  { id: 'SBUX', market: 'stocks', name: 'Starbucks', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'F', market: 'stocks', name: 'Ford', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'GM', market: 'stocks', name: 'GM', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'QQQ', market: 'stocks', name: 'Nasdaq 100 ETF', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'DIA', market: 'stocks', name: 'Dow ETF', src: 'yahoo', tfs: EXT_TFS },
+  { id: 'IWM', market: 'stocks', name: 'Russell 2000 ETF', src: 'yahoo', tfs: EXT_TFS },
   // forex — Yahoo Finance
-  { id: 'EURUSD=X', market: 'forex', name: 'EUR / USD', src: 'yahoo' },
-  { id: 'GBPUSD=X', market: 'forex', name: 'GBP / USD', src: 'yahoo' },
-  { id: 'USDJPY=X', market: 'forex', name: 'USD / JPY', src: 'yahoo' },
+  { id: 'EURUSD=X', market: 'forex', name: 'EUR / USD', src: 'yahoo', tfs: CORE_TFS },
+  { id: 'GBPUSD=X', market: 'forex', name: 'GBP / USD', src: 'yahoo', tfs: CORE_TFS },
+  { id: 'USDJPY=X', market: 'forex', name: 'USD / JPY', src: 'yahoo', tfs: CORE_TFS },
 ];
 
-const TFS = [
-  { tf: '5m', cb: 300, yh: ['5m', '5d'] },
-  { tf: '15m', cb: 900, yh: ['15m', '1mo'] },
-  { tf: '1h', cb: 3600, yh: ['1h', '3mo'] },
-  { tf: '1d', cb: 86400, yh: ['1d', '1y'] },
-];
+const TFDEF = {
+  '5m': { cb: 300, yh: ['5m', '5d'] },
+  '15m': { cb: 900, yh: ['15m', '1mo'] },
+  '1h': { cb: 3600, yh: ['1h', '3mo'] },
+  '1d': { cb: 86400, yh: ['1d', '1y'] },
+};
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -107,7 +145,8 @@ async function main() {
   const out = { generated: new Date().toISOString(), symbols: {} };
   for (const s of SYMBOLS) {
     const tfs = {};
-    for (const { tf, cb, yh } of TFS) {
+    for (const tf of s.tfs) {
+      const { cb, yh } = TFDEF[tf];
       let bars = null;
       try {
         bars = s.src === 'coinbase' ? await coinbaseCandles(s.id, cb) : await yahooCandles(s.id, yh[0], yh[1]);
