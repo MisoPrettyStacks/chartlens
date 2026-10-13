@@ -12,4 +12,4 @@ Free chart analyzer — live candles, transparent rule-based signals, scalp & sw
 - Chart screenshot upload + optional vision-AI readout via your own free Gemini key (runs in your browser, key never leaves it)
 - Trade journal (localStorage)
 
-**Research & education only — not financial advice.** Signals describe the chart; they do not predict the future.
+**Research only — not financial advice.** Signals describe the chart; they do not predict the future.
