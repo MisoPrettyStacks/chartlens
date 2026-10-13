@@ -19,6 +19,7 @@
 </header>
 
 <nav class="markets" id="markets" aria-label="markets"></nav>
+<div class="tapewrap"><div class="tape" id="tape"></div></div>
 
 <main class="layout">
   <section class="chartpanel">
@@ -38,6 +39,11 @@
     <section class="card" id="signalcard">
       <h2>Signal</h2>
       <div id="signal">Loading live data…</div>
+    </section>
+    <section class="card">
+      <h2>Recent signals</h2>
+      <p class="muted" style="font-size:12px;margin:0 0 6px">The engine's own past BUY/SELL markers on this chart, with what price did after. Rule-based history, not a backtest claim.</p>
+      <div id="feed">—</div>
     </section>
     <section class="card">
       <h2>Key levels</h2>
