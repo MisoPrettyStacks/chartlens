@@ -3,7 +3,10 @@
 // rules with cited values. Nothing is predicted, backfilled, or hallucinated.
 const DATA_URL = 'https://raw.githubusercontent.com/MisoPrettyStacks/chartlens/data/bars.json';
 const $ = (id) => document.getElementById(id);
-const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [] };
+const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [],
+  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false };
+const TFSEC = { '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
+const defaultN = (tf) => tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : 180;
 
 const DECIMALS = { 'BTC-USD': 2, 'ETH-USD': 2, 'XRP-USD': 4, 'SOL-USD': 2, 'EURUSD=X': 5, 'GBPUSD=X': 5, 'USDJPY=X': 3 };
 const dec = (s) => DECIMALS[s] ?? 2;
@@ -267,8 +270,12 @@ function drawChart(bars, sig) {
   cv.width = W * dpr; cv.height = H * dpr; ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, W, H);
   if (!bars.length) { ctx.fillStyle = '#6b768c'; ctx.fillText('No data for this symbol/timeframe yet.', 20, 40); return; }
-  const N = Math.min(bars.length, state.tf === '5m' ? 120 : state.tf === '15m' ? 96 : state.tf === '1h' ? 120 : 180);
-  const bs = bars.slice(-N);
+  // zoom/pan view: n = visible bars, off = bars trimmed from the right edge
+  const maxN = bars.length;
+  const N = Math.max(30, Math.min(state.view.n || defaultN(state.tf), maxN));
+  const off = Math.max(0, Math.min(state.view.off, maxN - N));
+  const startIdx = maxN - N - off;
+  const bs = bars.slice(startIdx, startIdx + N);
   const pad = { l: 8, r: 64, t: 10, b: 44 };
   let lo = Infinity, hi = -Infinity;
   for (const b of bs) { lo = Math.min(lo, b.l); hi = Math.max(hi, b.h); }
@@ -338,10 +345,10 @@ function drawChart(bars, sig) {
   }
   // BUY/SELL markers from the rule engine's own history
   const markers = findMarkers(bars, state.mode);
-  const off = bars.length - N;
+  const offM = startIdx;
   ctx.font = '700 9px system-ui';
   for (const m of markers) {
-    const vi = m.i - off;
+    const vi = m.i - offM;
     if (vi < 0 || vi >= bs.length) continue;
     const x = X(vi), isBuy = m.dir === 'BUY', col = isBuy ? '#16a34a' : '#dc2626';
     const y = isBuy ? Y(bs[vi].l) + 14 : Y(bs[vi].h) - 14;
@@ -362,9 +369,36 @@ function drawChart(bars, sig) {
       : d.toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: false, timeZone: 'America/Los_Angeles' });
     ctx.fillText(lbl, X(i) - 24, H - 8);
   }
-  $('spanpill').textContent = `${state.symbol} · ${state.tf} · last ${N} candles`;
+  const isLive = state.wsLive && state.data.symbols[state.symbol]?.market === 'crypto';
+  $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset`;
   $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>`;
 }
+
+/* ---------------- mouse: wheel zoom, drag pan, double-click reset ---------------- */
+(function initMouse() {
+  const cv = $('chart');
+  let dragX = null, dragOff = 0;
+  cv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const cur = state.view.n || defaultN(state.tf);
+    const next = Math.round(cur * (e.deltaY > 0 ? 1.18 : 1 / 1.18));
+    state.view.n = Math.max(30, Math.min(state.liveBars.length, next));
+    drawChart(state.liveBars, analyze(state.liveBars, state.mode));
+  }, { passive: false });
+  cv.addEventListener('mousedown', (e) => { dragX = e.clientX; dragOff = state.view.off; cv.style.cursor = 'grabbing'; });
+  window.addEventListener('mousemove', (e) => {
+    if (dragX == null || !state.liveBars.length) return;
+    const n = state.view.n || defaultN(state.tf);
+    const cw = (cv.clientWidth - 72) / n;
+    state.view.off = Math.max(0, Math.round(dragOff + (dragX - e.clientX) / Math.max(cw, 1)));
+    drawChart(state.liveBars, analyze(state.liveBars, state.mode));
+  });
+  window.addEventListener('mouseup', () => { dragX = null; cv.style.cursor = 'crosshair'; });
+  cv.addEventListener('dblclick', () => {
+    state.view = { n: null, off: 0 };
+    drawChart(state.liveBars, analyze(state.liveBars, state.mode));
+  });
+})();
 
 /* ---------------- panels ---------------- */
 /* ---------------- live tape + signal feed ---------------- */
@@ -393,9 +427,9 @@ function tapeTick(id, price) {
 }
 function renderFeed() {
   const el = $('feed');
-  const markers = findMarkers(state.bars, state.mode);
+  const markers = findMarkers(state.liveBars, state.mode);
   if (!markers.length) { el.innerHTML = '<span class="muted">No BUY/SELL markers on this timeframe yet.</span>'; return; }
-  const lastC = state.bars[state.bars.length - 1].c;
+  const lastC = state.liveBars[state.liveBars.length - 1].c;
   el.innerHTML = markers.slice(-8).reverse().map((m) => {
     const ret = m.dir === 'BUY' ? (lastC - m.price) / m.price * 100 : (m.price - lastC) / m.price * 100;
     const t = new Date(m.t * 1000).toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' });
@@ -404,15 +438,17 @@ function renderFeed() {
 }
 function render() {
   state.bars = getBars();
-  const sig = analyze(state.bars, state.mode);
-  drawChart(state.bars, sig);
+  state.liveBars = state.bars.map((b) => ({ ...b }));
+  state.view = { n: null, off: 0 };
+  const sig = analyze(state.liveBars, state.mode);
+  drawChart(state.liveBars, sig);
   renderSignal(sig);
   renderLevels(sig);
   renderRisk(sig);
   renderTape();
   renderFeed();
   const s = state.data.symbols[state.symbol];
-  const last = state.bars[state.bars.length - 1];
+  const last = state.liveBars[state.liveBars.length - 1];
   $('pxpill').innerHTML = s ? `${s.name} <b>${fmtP(state.symbol, last ? last.c : null)}</b>` : '—';
   const src = { crypto: 'Coinbase', stocks: 'Yahoo Finance', forex: 'Yahoo Finance' };
   $('srcs').textContent = `Sources: crypto — Coinbase public candles; stocks & forex — Yahoo Finance. Nothing simulated.`;
@@ -450,7 +486,7 @@ function renderRisk(sig) {
   el.innerHTML = `Risk <b>$${riskUsd.toFixed(2)}</b> · size <b>${size < 1 ? size.toFixed(4) : size.toFixed(2)} units</b> @ ${fmtP(state.symbol, sig.entry)}<br>
     Stop ${fmtP(state.symbol, sig.stop)} · T1 ${fmtP(state.symbol, t1)} · T2 ${fmtP(state.symbol, t2)}`;
 }
-['acct', 'riskpct'].forEach((id) => $(id).addEventListener('input', () => renderRisk(analyze(state.bars, state.mode))));
+['acct', 'riskpct'].forEach((id) => $(id).addEventListener('input', () => renderRisk(analyze(state.liveBars, state.mode))));
 
 /* ---------------- journal (localStorage) ---------------- */
 const JKEY = 'chartlens.journal';
@@ -521,25 +557,66 @@ $('analyze').onclick = async () => {
   } catch (e) { out.textContent = 'Vision request failed: ' + e.message; }
 };
 
-/* ---------------- live crypto tick (Coinbase WS) ---------------- */
+/* ---------------- live crypto price action (Coinbase WS matches) ---------------- */
+// Real trades stream in and extend the forming candle tick-by-tick, so the
+// chart moves live. Stocks/forex stay on the 15-min snapshots (labeled delayed).
+const CRYPTO_IDS = ['BTC-USD', 'ETH-USD', 'XRP-USD', 'SOL-USD'];
+function onTrade(pid, price, size, timeISO) {
+  tapeTick(pid, price);
+  if (pid !== state.symbol || !state.liveBars.length) return;
+  if (state.data.symbols[pid]?.market !== 'crypto') return;
+  const sec = TFSEC[state.tf] || 900;
+  const bucket = Math.floor(new Date(timeISO).getTime() / 1000 / sec) * sec;
+  const bars = state.liveBars;
+  const last = bars[bars.length - 1];
+  let newCandle = false;
+  if (!last || bucket > last.t) {
+    if (last && bucket > last.t + sec * 3) return; // gap vs publisher data — wait for refresh
+    bars.push({ t: bucket, o: price, h: price, l: price, c: price, v: size || 0 });
+    if (bars.length > 2500) bars.shift();
+    newCandle = true;
+  } else if (bucket === last.t) {
+    last.c = price;
+    if (price > last.h) last.h = price;
+    if (price < last.l) last.l = price;
+    last.v = (last.v || 0) + (size || 0);
+  } else return; // late/out-of-order trade for an old bucket
+  const s = state.data.symbols[state.symbol];
+  $('pxpill').innerHTML = `${s.name} <b>${fmtP(state.symbol, price)}</b> <span class="muted">live</span>`;
+  const now = Date.now();
+  if (now - state.lastDraw > 500) {
+    state.lastDraw = now;
+    drawChart(bars, analyze(bars, state.mode));
+    if (newCandle) { // refresh panels on candle close
+      const sig = analyze(bars, state.mode);
+      renderSignal(sig); renderLevels(sig); renderRisk(sig); renderFeed();
+    }
+  }
+}
 function connectWS() {
-  try {
-    const ws = new WebSocket('wss://ws-feed.exchange.coinbase.com');
-    ws.onopen = () => ws.send(JSON.stringify({ type: 'subscribe', channels: [{ name: 'ticker', product_ids: ['BTC-USD', 'ETH-USD', 'XRP-USD', 'SOL-USD'] }] }));
+  let delay = 2000;
+  const open = () => {
+    const retry = () => {
+      state.wsLive = false;
+      setTimeout(open, Math.min(delay, 30000));
+      delay *= 2;
+    };
+    let ws;
+    try { ws = new WebSocket('wss://ws-feed.exchange.coinbase.com'); } catch { retry(); return; }
+    ws.onopen = () => {
+      delay = 2000; state.wsLive = true;
+      ws.send(JSON.stringify({ type: 'subscribe', channels: [{ name: 'matches', product_ids: CRYPTO_IDS }] }));
+    };
     ws.onmessage = (ev) => {
       try {
         const m = JSON.parse(ev.data);
-        if (m.type === 'ticker' && m.price) {
-          tapeTick(m.product_id, parseFloat(m.price));
-        }
-        if (m.type === 'ticker' && m.product_id === state.symbol && m.price) {
-          const s = state.data.symbols[state.symbol];
-          $('pxpill').innerHTML = `${s.name} <b>${fmtP(state.symbol, parseFloat(m.price))}</b> <span class="muted">live</span>`;
-        }
+        if (m.type === 'match' && m.price) onTrade(m.product_id, parseFloat(m.price), parseFloat(m.size), m.time);
       } catch {}
     };
-    ws.onerror = () => {};
-  } catch {}
+    ws.onclose = retry;
+    ws.onerror = () => { try { ws.close(); } catch {} };
+  };
+  open();
 }
 
 /* ---------------- init ---------------- */
@@ -553,7 +630,7 @@ document.querySelectorAll('#modes button').forEach((b) => {
     buildSyms(); render();
   };
 });
-window.addEventListener('resize', () => drawChart(state.bars, analyze(state.bars, state.mode)));
+window.addEventListener('resize', () => drawChart(state.liveBars, analyze(state.liveBars, state.mode)));
 (async () => {
   try { await loadData(); connectWS(); jRender(); setInterval(loadData, 15 * 60 * 1000); }
   catch (e) { $('asof').textContent = 'waiting for first data publish…'; }
