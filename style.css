@@ -12,6 +12,15 @@ body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 syste
 .livepill { display: inline-flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; font-size: 13px; white-space: nowrap; }
 .livepill .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--up); box-shadow: 0 0 0 4px rgba(22,163,74,.15); }
 .markets { display: flex; gap: 8px; padding: 10px 26px 0; }
+.tapewrap { overflow: hidden; padding: 10px 26px 0; }
+.tape { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
+.tapeitem { flex: 0 0 auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tapeitem:hover { border-color: var(--ink); }
+.tapeitem .up { color: var(--up); } .tapeitem .dn { color: var(--down); }
+.feeditem { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; padding: 5px 0; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.feeditem:last-child { border-bottom: none; }
+.feeditem .BUY { color: var(--up); font-weight: 700; } .feeditem .SELL { color: var(--down); font-weight: 700; }
+.feeditem .win { color: var(--up); } .feeditem .loss { color: var(--down); }
 .markets button, .syms button, .tfs button, .modes button { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 7px 14px; font-size: 13.5px; cursor: pointer; color: var(--ink); }
 .markets button.on, .syms button.on, .tfs button.on, .modes button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 .layout { display: grid; grid-template-columns: 1fr 340px; gap: 18px; padding: 14px 26px; align-items: start; }
