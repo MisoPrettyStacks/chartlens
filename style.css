@@ -21,6 +21,16 @@ body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 syste
 .feeditem:last-child { border-bottom: none; }
 .feeditem .BUY { color: var(--up); font-weight: 700; } .feeditem .SELL { color: var(--down); font-weight: 700; }
 .feeditem .win { color: var(--up); } .feeditem .loss { color: var(--down); }
+.searchwrap { position: relative; }
+#search { border: 1px solid var(--line); border-radius: 10px; padding: 7px 12px; font-size: 13.5px; width: 200px; }
+#searchres { position: absolute; top: 100%; left: 0; right: 0; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-top: 4px; max-height: 260px; overflow: auto; display: none; z-index: 20; box-shadow: 0 8px 24px rgba(0,0,0,.08); }
+#searchres div { padding: 8px 12px; font-size: 13px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+#searchres div:hover { background: #eef1f6; }
+#searchres .sym { font-weight: 700; }
+#searchres .nm { color: var(--muted); font-size: 12px; }
+.tapetag { font-size: 9px; font-weight: 700; border-radius: 4px; padding: 1px 5px; margin-left: 4px; }
+.tapetag.live { background: #dcfce7; color: #166534; }
+.tapetag.delayed { background: #eef1f6; color: #64748b; }
 .markets button, .syms button, .tfs button, .modes button { border: 1px solid var(--line); background: var(--card); border-radius: 10px; padding: 7px 14px; font-size: 13.5px; cursor: pointer; color: var(--ink); }
 .markets button.on, .syms button.on, .tfs button.on, .modes button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
 .layout { display: grid; grid-template-columns: 1fr 340px; gap: 18px; padding: 14px 26px; align-items: start; }
