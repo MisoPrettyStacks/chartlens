@@ -427,12 +427,13 @@ $('analyze').onclick = async () => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ contents: [{ parts: [
         { text: 'You are a technical-analysis assistant. Describe ONLY what is objectively visible in this chart screenshot: trend direction, visible support/resistance levels with approximate prices, chart patterns, momentum, volume. Do not predict the future. End with: "This is chart description only, not financial advice."' },
-        { inline_data: { mime_type: f.type || 'image/png', data: b64 } },
+        { inlineData: { mimeType: f.type || 'image/png', data: b64 } },
       ] }] }),
     });
     const j = await r.json();
-    const txt = j?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || 'No readout returned.';
-    out.textContent = txt.slice(0, 4000);
+    if (j.error) { out.textContent = 'Gemini API error: ' + (j.error.message || JSON.stringify(j.error).slice(0, 300)); return; }
+    const txt = (j?.candidates?.[0]?.content?.parts?.map((p) => p.text).join('') || '').trim();
+    out.textContent = txt ? txt.slice(0, 4000) : 'No readout returned (empty response — try again or check your key).';
   } catch (e) { out.textContent = 'Vision request failed: ' + e.message; }
 };
 
