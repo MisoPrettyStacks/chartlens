@@ -775,18 +775,22 @@ function triHoverAt(g, x, y) {
   if (Math.abs(x - ax) <= 24 && Math.abs(y - ay) <= 17)
     return { kind: 'apex', tri, price: tri.hiAt(tri.apexI) };
   const dHi = Math.abs(y - Yp(tri.hiAt(gx))), dLo = Math.abs(y - Yp(tri.loAt(gx)));
-  if (Math.min(dHi, dLo) <= 7) {
-    // clock time of the exact spot being hovered (extends past the last
-    // candle when the lines run into the projection cone)
+  if (Math.min(dHi, dLo) <= 12) {
+    // snapped to the candle column under the pointer: the read shows that
+    // candle's time and the line's price at that candle (no in-between
+    // minutes like 11:46), and the wider band keeps the box from dropping
+    // out while sliding along the line
+    const part = dHi <= dLo ? 'hi' : 'lo';
+    const snapI = Math.max(Math.ceil(fromFull), Math.min(Math.round(gx), Math.floor(capFull)));
     const barsArr = state.liveBars || [];
     let tLbl = '';
     if (barsArr.length) {
       const tfS = TFSEC[state.tf] || 900;
-      const bi = Math.max(0, Math.min(Math.floor(gx), barsArr.length - 1));
-      const tt = barsArr[bi].t + (gx - bi) * tfS;
+      const tt = snapI < barsArr.length ? barsArr[snapI].t
+        : barsArr[barsArr.length - 1].t + (snapI - (barsArr.length - 1)) * tfS;
       tLbl = timeLblOf(tt, state.tf) + ' PT';
     }
-    return { kind: dHi <= dLo ? 'hi' : 'lo', tri, price: dHi <= dLo ? tri.hiAt(gx) : tri.loAt(gx), tLbl };
+    return { kind: part, tri, price: part === 'hi' ? tri.hiAt(snapI) : tri.loAt(snapI), tLbl };
   }
   return null;
 }
