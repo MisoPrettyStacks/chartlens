@@ -6,8 +6,8 @@ const $ = (id) => document.getElementById(id);
 const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [],
   liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { sym: null, t0: null, v: null }, lastPrice: null, _hoverI: null, _geom: null,
   showTriangles: (() => { try { return localStorage.getItem('chartlens.triangles') === '1'; } catch { return false; } })(), _tri: null, _triHover: false };
-const TFSEC = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
-const defaultN = (tf) => tf === '1m' ? 120 : tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : 180;
+const TFSEC = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '6h': 21600, '12h': 43200, '1d': 86400 };
+const defaultN = (tf) => tf === '1m' ? 120 : tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : tf === '6h' ? 120 : tf === '12h' ? 120 : 180;
 
 const DECIMALS = { 'BTC-USD': 2, 'ETH-USD': 2, 'XRP-USD': 4, 'SOL-USD': 2, 'EURUSD=X': 5, 'GBPUSD=X': 5, 'USDJPY=X': 3 };
 const dec = (s) => DECIMALS[s] ?? 2;
@@ -67,7 +67,7 @@ function buildSyms() {
   // crypto timeframes all come straight from Coinbase live, so every frame is
   // available even when the published file doesn't carry it (notably 1m)
   const isCrypto = state.data.symbols[state.symbol]?.market === 'crypto';
-  for (const tf of ['1m', '5m', '15m', '1h', '1d']) {
+  for (const tf of ['1m', '5m', '15m', '1h', '6h', '12h', '1d']) {
     const b = document.createElement('button');
     b.textContent = tf;
     b.className = state.tf === tf ? 'on' : '';
@@ -101,7 +101,8 @@ function getBars() {
 // always current to the forming candle; the WS feed then extends it tick by
 // tick. Stocks/forex stay on the published file (Yahoo has no CORS API).
 async function fetchCoinbaseBars(id, tf) {
-  const gran = TFSEC[tf];
+  // Coinbase has no 12h granularity — build 12h candles from its 6h ones
+  const gran = tf === '12h' ? 21600 : TFSEC[tf];
   if (!gran) return null;
   // no start/end: Coinbase returns the latest ~300 candles incl. the forming one
   const r = await fetch(`https://api.exchange.coinbase.com/products/${id}/candles?granularity=${gran}`);
@@ -109,7 +110,18 @@ async function fetchCoinbaseBars(id, tf) {
   const raw = await r.json();
   if (!Array.isArray(raw) || !raw.length) return null;
   // raw: [time, low, high, open, close, volume]
-  return raw.map(([t, l, h, o, c, v]) => ({ t, o, h, l, c, v })).sort((a, b) => a.t - b.t);
+  const bars = raw.map(([t, l, h, o, c, v]) => ({ t, o, h, l, c, v })).sort((a, b) => a.t - b.t);
+  if (tf !== '12h') return bars;
+  const out = [];
+  for (const b of bars) {
+    const bucket = Math.floor(b.t / 43200) * 43200;
+    const last = out[out.length - 1];
+    if (last && last.t === bucket) {
+      last.h = Math.max(last.h, b.h); last.l = Math.min(last.l, b.l);
+      last.c = b.c; last.v += b.v;
+    } else out.push({ t: bucket, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v });
+  }
+  return out;
 }
 async function refreshCryptoLive() {
   const sym = state.symbol, tf = state.tf;
@@ -676,7 +688,7 @@ function explainCandle(bars, gi) {
   if (!b) return null;
   const sym = state.symbol;
   const tfSec = TFSEC[state.tf] || 900;
-  const durName = { '1m': '1 minute', '5m': '5 minutes', '15m': '15 minutes', '1h': '1 hour', '1d': 'this day' }[state.tf] || 'period';
+  const durName = { '1m': '1 minute', '5m': '5 minutes', '15m': '15 minutes', '1h': '1 hour', '6h': '6 hours', '12h': '12 hours', '1d': 'this day' }[state.tf] || 'period';
   const chg = b.c - b.o;
   const chgPct = b.o ? (chg / b.o) * 100 : 0;
   const range = b.h - b.l;
