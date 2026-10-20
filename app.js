@@ -600,13 +600,17 @@ function drawChart(bars, sig) {
     const over = prevLy - (H - pad.b - 3);
     if (over > 0) for (const L of zLabels) L.ly -= over;
   }
+  // zone labels live on the right side of the plot, right-aligned against the
+  // price axis (same vertical de-collision as before)
+  ctx.textAlign = 'right';
   for (const L of zLabels) {
     const z = L.z, y = Y(z.v);
     ctx.strokeStyle = z.c; ctx.lineWidth = z.dash.length ? 1.2 : 1.8;
     ctx.setLineDash(z.dash); ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = z.c;
-    ctx.fillText(`${z.label ? z.label + ' ' : ''}${z.v.toFixed(dec(state.symbol))}`, pad.l + 4, L.ly);
+    ctx.fillText(`${z.label ? z.label + ' ' : ''}${z.v.toFixed(dec(state.symbol))}`, W - pad.r - 4, L.ly);
   }
+  ctx.textAlign = 'left';
   // BUY/SELL markers from the rule engine's own history
   const markers = findMarkers(bars, state.mode);
   const offM = startIdx;
