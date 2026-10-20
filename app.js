@@ -4,7 +4,7 @@
 const DATA_URL = 'https://raw.githubusercontent.com/MisoPrettyStacks/chartlens/data/bars.json';
 const $ = (id) => document.getElementById(id);
 const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [],
-  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { t0: null, v: null } };
+  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { t0: null, v: null }, lastPrice: null };
 const TFSEC = { '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 const defaultN = (tf) => tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : 180;
 
@@ -122,6 +122,7 @@ async function refreshCryptoLive() {
     drawChart(state.liveBars, sig);
     renderSignal(sig); renderLevels(sig); renderRisk(sig); renderFeed();
     const last = bars[bars.length - 1];
+    state.lastPrice = last.c;
     $('pxpill').innerHTML = `${s.name} <b>${fmtP(state.symbol, last.c)}</b>`;
   } catch {}
 }
@@ -385,6 +386,9 @@ function drawChart(bars, sig) {
   }
   if (state.kalshi && state.kalshi.v != null)
     zones.push({ v: state.kalshi.v, c: '#111111', dash: [7, 5], label: 'KALSHI TARGET' });
+  // live price line (blue dashed): latest streamed trade, falls back to last close
+  const liveV = state.lastPrice != null ? state.lastPrice : (bs.length ? bs[bs.length - 1].c : null);
+  if (liveV != null) zones.push({ v: liveV, c: '#2563eb', dash: [4, 3], label: 'LIVE' });
   for (const z of zones) { lo = Math.min(lo, z.v); hi = Math.max(hi, z.v); }
   const rg = Math.max(hi - lo, 1e-9); lo -= rg * 0.06; hi += rg * 0.06;
   const cw = (W - pad.l - pad.r) / (N + CONE);
@@ -518,7 +522,8 @@ function drawChart(bars, sig) {
   const isLive = state.wsLive && state.data.symbols[state.symbol]?.market === 'crypto';
   $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset`;
   $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>` +
-    ((state.kalshi && state.kalshi.v != null) ? `<span><b style="color:#111">- -</b> Kalshi target</span>` : ``);
+    ((state.kalshi && state.kalshi.v != null) ? `<span><b style="color:#111">- -</b> Kalshi target</span>` : ``) +
+    (liveV != null ? `<span><b style="color:#2563eb">- -</b> live price</span>` : ``);
 }
 
 /* ---------------- mouse: wheel zoom, drag pan, double-click reset ---------------- */
@@ -640,6 +645,7 @@ function render() {
   renderFeed();
   const s = state.data.symbols[state.symbol];
   const last = state.liveBars[state.liveBars.length - 1];
+  state.lastPrice = last ? last.c : null;
   $('pxpill').innerHTML = s ? `${s.name} <b>${fmtP(state.symbol, last ? last.c : null)}</b>` : '—';
   refreshCryptoLive(); // crypto: replace published bars with live Coinbase candles
   const src = { crypto: 'Coinbase', stocks: 'Yahoo Finance', forex: 'Yahoo Finance' };
@@ -757,6 +763,7 @@ const CRYPTO_IDS = ['BTC-USD', 'ETH-USD', 'XRP-USD', 'SOL-USD'];
 function onTrade(pid, price, size, timeISO) {
   tapeTick(pid, price);
   if (pid !== state.symbol || !state.liveBars.length) return;
+  state.lastPrice = price;
   if (state.data.symbols[pid]?.market !== 'crypto') return;
   const sec = TFSEC[state.tf] || 900;
   const bucket = Math.floor(new Date(timeISO).getTime() / 1000 / sec) * sec;
