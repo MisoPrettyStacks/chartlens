@@ -4,7 +4,7 @@
 const DATA_URL = 'https://raw.githubusercontent.com/MisoPrettyStacks/chartlens/data/bars.json';
 const $ = (id) => document.getElementById(id);
 const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [],
-  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { sym: null, t0: null, v: null }, lastPrice: null };
+  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { sym: null, t0: null, v: null }, lastPrice: null, _hoverI: null, _geom: null };
 const TFSEC = { '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 const defaultN = (tf) => tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : 180;
 
@@ -70,7 +70,7 @@ function buildSyms() {
     b.disabled = !avail[tf];
     b.style.opacity = avail[tf] ? 1 : 0.35;
     b.title = avail[tf] ? '' : 'not published for this symbol';
-    b.onclick = () => { state.tf = tf; render(); };
+    b.onclick = () => { state.tf = tf; hideCandleTip(); render(); };
     tfs.appendChild(b);
   }
 }
@@ -80,6 +80,7 @@ function selectSymbol(id) {
   const s = state.data.symbols[id];
   if (s && s.market !== state.market) { state.market = s.market; buildMarkets(); }
   if (s && !s.tfs[state.tf]) state.tf = '15m'; // extended symbols skip 5m
+  hideCandleTip();
   buildSyms();
   render();
 }
@@ -528,11 +529,103 @@ function drawChart(bars, sig) {
     if (x < pad.l) continue;
     ctx.fillText(lbl, x, H - 8);
   }
+  // remember this frame's geometry so the candle-hover tooltip can map the
+  // mouse back to a candle, and re-draw the hover highlight on every repaint
+  // (live ticks redraw constantly; the highlight must survive them)
+  state._geom = { bs, startIdx, cw, pad, W, H, lo, hi };
+  if (state._hoverI != null && state._hoverI < bs.length) {
+    const hx = X(state._hoverI);
+    ctx.fillStyle = 'rgba(79,70,229,.08)';
+    ctx.fillRect(hx - cw / 2, pad.t, cw, H - pad.t - pad.b);
+    ctx.strokeStyle = 'rgba(79,70,229,.55)'; ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(hx, Y(bs[state._hoverI].h)); ctx.lineTo(hx, Y(bs[state._hoverI].l));
+    ctx.stroke();
+    ctx.strokeRect(hx - bw / 2 - 1, Y(bs[state._hoverI].h), bw + 2, Y(bs[state._hoverI].l) - Y(bs[state._hoverI].h));
+  }
   const isLive = state.wsLive && state.data.symbols[state.symbol]?.market === 'crypto';
-  $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset`;
+  $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset, hover a candle for a plain-English read`;
   $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>` +
     ((state.kalshi && state.kalshi.sym === state.symbol && state.kalshi.v != null) ? `<span><b style="color:#111">- -</b> Kalshi target</span>` : ``) +
     (liveV != null ? `<span><b style="color:#2563eb">- -</b> live price</span>` : ``);
+}
+
+/* ---------------- candle hover: plain-English read of one candle ---------------- */
+// Explains a single candle the way you'd explain it to a friend: where price
+// started and ended, how far it swung, what the thin lines (wicks) mean, and
+// whether the move was bigger or quieter than the candles around it. It only
+// describes what already happened — it never predicts or advises.
+function explainCandle(bars, gi) {
+  const b = bars[gi];
+  if (!b) return null;
+  const sym = state.symbol;
+  const tfSec = TFSEC[state.tf] || 900;
+  const durName = { '5m': '5 minutes', '15m': '15 minutes', '1h': '1 hour', '1d': 'this day' }[state.tf] || 'period';
+  const chg = b.c - b.o;
+  const chgPct = b.o ? (chg / b.o) * 100 : 0;
+  const range = b.h - b.l;
+  const body = Math.abs(chg);
+  const upper = b.h - Math.max(b.o, b.c);
+  const lower = Math.min(b.o, b.c) - b.l;
+  const dir = chg > 0 ? 'up' : chg < 0 ? 'dn' : 'flat';
+  const badgeTxt = dir === 'flat' ? 'FLAT' : `${dir === 'up' ? 'UP' : 'DOWN'} ${chg >= 0 ? '+' : ''}${chgPct.toFixed(2)}%`;
+  const fmtT = (t) => new Date(t * 1000).toLocaleString('en-US', { hour: 'numeric', minute: '2-digit', hourCycle: 'h23', timeZone: 'America/Los_Angeles' });
+  const dayStr = new Date(b.t * 1000).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: 'America/Los_Angeles' });
+  const title = state.tf === '1d' ? dayStr : `${dayStr} · ${fmtT(b.t)} – ${fmtT(b.t + tfSec)} PT`;
+  const name = state.data?.symbols[sym]?.name || sym;
+  const parts = [];
+  if (range <= 0) {
+    parts.push(`Price sat completely still during this candle — it opened and closed at ${fmtP(sym, b.c)} and never moved.`);
+  } else {
+    parts.push(dir === 'flat'
+      ? `During these ${durName}, price ended almost exactly where it started (${fmtP(sym, b.c)}), even though it swung between ${fmtP(sym, b.l)} and ${fmtP(sym, b.h)} along the way.`
+      : `During these ${durName}, price went ${dir === 'up' ? 'up' : 'down'} — it started at ${fmtP(sym, b.o)} and ended at ${fmtP(sym, b.c)}, a move of ${chg >= 0 ? '+' : '−'}${fmtP(sym, Math.abs(chg))} (${chg >= 0 ? '+' : ''}${chgPct.toFixed(2)}%). Along the way it reached as high as ${fmtP(sym, b.h)} and as low as ${fmtP(sym, b.l)} — a total swing of ${fmtP(sym, range)}.`);
+    if (body / range >= 0.7)
+      parts.push(`Almost the whole candle is solid, which just means ${dir === 'dn' ? 'sellers' : 'buyers'} stayed in charge the whole time and the other side barely pushed back.`);
+    else if (body / range <= 0.2 && dir !== 'flat')
+      parts.push(`The solid part of the candle is tiny compared with the swing — buyers and sellers fought hard, but neither side really won this one. That kind of tug-of-war often means people are undecided.`);
+    if (upper / range >= 0.4 && upper > body)
+      parts.push(`See the long thin line sticking out of the top? Buyers pushed the price up to ${fmtP(sym, b.h)}, but sellers dragged it back down before the candle closed — the high didn't hold.`);
+    if (lower / range >= 0.4 && lower > body)
+      parts.push(`See the long thin line poking out of the bottom? Sellers pushed the price down to ${fmtP(sym, b.l)}, but buyers pulled it back up before the close — the low didn't hold.`);
+    // how this candle compares with the ones before it
+    const prevs = bars.slice(Math.max(0, gi - 20), gi);
+    if (prevs.length >= 5) {
+      const avgRange = prevs.reduce((a, p) => a + (p.h - p.l), 0) / prevs.length;
+      if (avgRange > 0) {
+        const rr = range / avgRange;
+        if (rr >= 1.6) parts.push(`That swing was much bigger than usual — about ${rr.toFixed(1)} times the size of the candles right before it. Something got people's attention during this one.`);
+        else if (rr <= 0.55) parts.push(`This was a quiet candle — its swing was only about ${Math.round(rr * 100)}% of the usual size lately. Not much happened.`);
+      }
+      const withVol = prevs.filter((p) => p.v > 0);
+      if (b.v > 0 && withVol.length >= 5) {
+        const avgVol = withVol.reduce((a, p) => a + p.v, 0) / withVol.length;
+        if (avgVol > 0) {
+          const vr = b.v / avgVol;
+          if (vr >= 1.6) parts.push(`Trading was busier than usual, too — about ${vr.toFixed(1)} times the typical amount changed hands.`);
+          else if (vr <= 0.6) parts.push(`Trading was thin — only about ${Math.round(vr * 100)}% of the usual amount changed hands, so fewer people were involved in this move.`);
+        }
+      }
+    }
+  }
+  const prev = gi > 0 ? bars[gi - 1] : null;
+  if (prev && range > 0) {
+    if (b.h > prev.h && b.l < prev.l) parts.push(`It also stretched both above and below the candle before it — a wider battle than the previous one.`);
+    else if (b.h > prev.h && chg > 0) parts.push(`It also reached higher than the candle before it — the upward push carried a bit further.`);
+    else if (b.l < prev.l && chg < 0) parts.push(`It also dipped lower than the candle before it — the downward push carried a bit further.`);
+  }
+  const stillForming = gi === bars.length - 1 && (b.t + tfSec) * 1000 > Date.now();
+  if (stillForming) parts.push(`Heads up: this is the candle that's still happening right now, so its shape can keep changing until the ${durName === 'this day' ? 'day' : durName} is over.`);
+  const html = `<div class="ct-head"><b>${name} · ${title}</b><span class="ct-badge ${dir}">${badgeTxt}</span></div>` +
+    `<div class="ct-ohlc">Open ${fmtP(sym, b.o)} · High ${fmtP(sym, b.h)} · Low ${fmtP(sym, b.l)} · Close ${fmtP(sym, b.c)}</div>` +
+    parts.map((p) => `<p>${p}</p>`).join('') +
+    `<div class="ct-foot">Just what happened in this window — it doesn't say what happens next.</div>`;
+  return html;
+}
+function hideCandleTip() {
+  const tip = $('candleTip');
+  if (tip) tip.style.display = 'none';
+  state._hoverI = null;
 }
 
 /* ---------------- mouse: wheel zoom, drag pan, double-click reset ---------------- */
@@ -541,12 +634,13 @@ function drawChart(bars, sig) {
   let dragX = null, dragOff = 0;
   cv.addEventListener('wheel', (e) => {
     e.preventDefault();
+    hideCandleTip();
     const cur = state.view.n || defaultN(state.tf);
     const next = Math.round(cur * (e.deltaY > 0 ? 1.18 : 1 / 1.18));
     state.view.n = Math.max(30, Math.min(state.liveBars.length, next));
     drawChart(state.liveBars, analyze(state.liveBars, state.mode));
   }, { passive: false });
-  cv.addEventListener('mousedown', (e) => { dragX = e.clientX; dragOff = state.view.off; cv.style.cursor = 'grabbing'; });
+  cv.addEventListener('mousedown', (e) => { hideCandleTip(); dragX = e.clientX; dragOff = state.view.off; cv.style.cursor = 'grabbing'; });
   window.addEventListener('mousemove', (e) => {
     if (dragX == null || !state.liveBars.length) return;
     const n = state.view.n || defaultN(state.tf);
@@ -556,8 +650,40 @@ function drawChart(bars, sig) {
   });
   window.addEventListener('mouseup', () => { dragX = null; cv.style.cursor = 'crosshair'; });
   cv.addEventListener('dblclick', () => {
+    hideCandleTip();
     state.view = { n: null, off: 0 };
     drawChart(state.liveBars, analyze(state.liveBars, state.mode));
+  });
+  // hover: map the mouse x to a candle, explain it in plain words, and keep
+  // the tooltip inside the chart box (flip side near the edges)
+  cv.addEventListener('mousemove', (e) => {
+    if (dragX != null || !state._geom || !state.liveBars.length) return;
+    const g = state._geom, tip = $('candleTip');
+    if (!tip) return;
+    const rect = cv.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    const i = Math.round((x - g.pad.l) / g.cw - 0.5);
+    if (i < 0 || i >= g.bs.length || y < g.pad.t || y > g.H - g.pad.b) {
+      if (state._hoverI != null) { hideCandleTip(); drawChart(state.liveBars, analyze(state.liveBars, state.mode)); }
+      return;
+    }
+    if (i !== state._hoverI) {
+      const html = explainCandle(state.liveBars, g.startIdx + i);
+      if (!html) { hideCandleTip(); return; }
+      state._hoverI = i;
+      tip.innerHTML = html;
+      tip.style.display = 'block';
+      drawChart(state.liveBars, analyze(state.liveBars, state.mode));
+    }
+    // position next to the mouse, flipped when it would overflow the chart
+    let left = x + 16, top = y + 16;
+    if (left + tip.offsetWidth > rect.width - 6) left = x - tip.offsetWidth - 16;
+    if (top + tip.offsetHeight > rect.height - 6) top = y - tip.offsetHeight - 16;
+    tip.style.left = Math.max(2, left) + 'px';
+    tip.style.top = Math.max(2, top) + 'px';
+  });
+  cv.addEventListener('mouseleave', () => {
+    if (state._hoverI != null) { hideCandleTip(); drawChart(state.liveBars, analyze(state.liveBars, state.mode)); }
   });
 })();
 
@@ -838,6 +964,7 @@ document.querySelectorAll('#modes button').forEach((b) => {
     state.mode = b.dataset.mode;
     // scalp → fast frames, swing → slow frames
     state.tf = state.mode === 'scalp' ? '5m' : '1d';
+    hideCandleTip();
     buildSyms(); render();
   };
 });

@@ -44,6 +44,17 @@ body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 syste
 .chartwrap { position: relative; }
 #chart { width: 100%; height: 420px; display: block; background: #fafbfe; border: 1px solid var(--line); border-radius: 10px; cursor: crosshair; }
 .spanpill { position: absolute; top: 8px; left: 8px; padding: 4px 10px; border-radius: 8px; background: #eef1f6; border: 1px solid #dfe5f2; color: #33415c; font-size: 11px; font-weight: 600; pointer-events: none; }
+#candleTip { position: absolute; z-index: 5; display: none; max-width: 320px; background: #ffffff; border: 1px solid #dfe5f2; border-radius: 12px; box-shadow: 0 10px 28px rgba(20,28,50,.16); padding: 10px 12px; font-size: 12.5px; line-height: 1.5; color: #1b2333; pointer-events: none; }
+.ct-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; }
+.ct-head b { font-size: 13px; }
+.ct-badge { font-size: 11px; font-weight: 800; border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+.ct-badge.up { background: #dcfce7; color: #166534; }
+.ct-badge.dn { background: #fee2e2; color: #991b1b; }
+.ct-badge.flat { background: #eef1f6; color: #33415c; }
+.ct-ohlc { font-size: 11.5px; color: #6b768c; font-variant-numeric: tabular-nums; margin-bottom: 6px; }
+#candleTip p { margin: 0 0 6px; }
+#candleTip p:last-child { margin-bottom: 0; }
+.ct-foot { font-size: 11px; color: #6b768c; border-top: 1px dashed #e4e9f2; padding-top: 6px; margin-top: 2px; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 8px; }
 .legend b { font-weight: 700; }
 .sidepanel { display: flex; flex-direction: column; gap: 14px; }
