@@ -81,6 +81,44 @@ function getBars() {
   return bars ? bars.map(([t, o, h, l, c, v]) => ({ t, o, h, l, c, v })) : [];
 }
 
+/* ---------------- live crypto candles (Coinbase REST, direct) ---------------- */
+// The publisher commits bars.json roughly every 15 min when GitHub's scheduler
+// cooperates — but that scheduler can lag hours. Coinbase's public candles API
+// is CORS-enabled, so crypto charts backfill straight from the source and are
+// always current to the forming candle; the WS feed then extends it tick by
+// tick. Stocks/forex stay on the published file (Yahoo has no CORS API).
+async function fetchCoinbaseBars(id, tf) {
+  const gran = TFSEC[tf];
+  if (!gran) return null;
+  // no start/end: Coinbase returns the latest ~300 candles incl. the forming one
+  const r = await fetch(`https://api.exchange.coinbase.com/products/${id}/candles?granularity=${gran}`);
+  if (!r.ok) return null;
+  const raw = await r.json();
+  if (!Array.isArray(raw) || !raw.length) return null;
+  // raw: [time, low, high, open, close, volume]
+  return raw.map(([t, l, h, o, c, v]) => ({ t, o, h, l, c, v })).sort((a, b) => a.t - b.t);
+}
+async function refreshCryptoLive() {
+  const s = state.data?.symbols[state.symbol];
+  if (!s || s.market !== 'crypto') return;
+  try {
+    const bars = await fetchCoinbaseBars(state.symbol, state.tf);
+    if (!bars || bars.length < 10) return;
+    state.bars = bars;
+    state.liveBars = bars.map((b) => ({ ...b }));
+    // sync the cached published copy so timeframe switches stay fresh too
+    if (state.data.symbols[state.symbol].tfs)
+      state.data.symbols[state.symbol].tfs[state.tf] = bars.map((b) => [b.t, b.o, b.h, b.l, b.c, b.v]);
+    $('asof').textContent = 'live · ' + new Date().toLocaleString('en-US',
+      { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' }) + ' PT';
+    const sig = analyze(state.liveBars, state.mode);
+    drawChart(state.liveBars, sig);
+    renderSignal(sig); renderLevels(sig); renderRisk(sig); renderFeed();
+    const last = bars[bars.length - 1];
+    $('pxpill').innerHTML = `${s.name} <b>${fmtP(state.symbol, last.c)}</b>`;
+  } catch {}
+}
+
 /* ---------------- indicators (deterministic) ---------------- */
 const closes = (bars) => bars.map((b) => b.c);
 function sma(vals, p) {
@@ -381,19 +419,31 @@ function drawChart(bars, sig) {
     ctx.fillStyle = '#4f46e5'; ctx.font = '600 10px system-ui';
     ctx.fillText('ATR cone', X(N - 1 + 2), Y(cone.px + cone.atr * Math.sqrt(cone.n)) - 4);
   }
-  // zones
+  // zones — text labels are pushed apart vertically so close levels never print over each other
   ctx.font = '600 10px system-ui';
-  for (const z of zones) {
-    const y = Y(z.v);
+  const zLabels = zones.map((z) => ({ z, y: Y(z.v), ly: Y(z.v) - 4 }));
+  zLabels.sort((a, b) => a.ly - b.ly);
+  let prevLy = -1e9;
+  for (const L of zLabels) {
+    if (L.ly < prevLy + 11) L.ly = prevLy + 11;
+    prevLy = L.ly;
+  }
+  if (zLabels.length) { // shift the whole stack up if it would spill below the plot
+    const over = prevLy - (H - pad.b - 3);
+    if (over > 0) for (const L of zLabels) L.ly -= over;
+  }
+  for (const L of zLabels) {
+    const z = L.z, y = Y(z.v);
     ctx.strokeStyle = z.c; ctx.lineWidth = z.dash.length ? 1.2 : 1.8;
     ctx.setLineDash(z.dash); ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = z.c;
-    ctx.fillText(`${z.label ? z.label + ' ' : ''}${z.v.toFixed(dec(state.symbol))}`, pad.l + 4, y - 4);
+    ctx.fillText(`${z.label ? z.label + ' ' : ''}${z.v.toFixed(dec(state.symbol))}`, pad.l + 4, L.ly);
   }
   // BUY/SELL markers from the rule engine's own history
   const markers = findMarkers(bars, state.mode);
   const offM = startIdx;
   ctx.font = '700 9px system-ui';
+  let lastBuyTextX = -1e9, lastSellTextX = -1e9;
   for (const m of markers) {
     const vi = m.i - offM;
     if (vi < 0 || vi >= bs.length) continue;
@@ -404,17 +454,31 @@ function drawChart(bars, sig) {
     if (isBuy) { ctx.moveTo(x, y - 7); ctx.lineTo(x - 6, y + 2); ctx.lineTo(x + 6, y + 2); }
     else { ctx.moveTo(x, y + 7); ctx.lineTo(x - 6, y - 2); ctx.lineTo(x + 6, y - 2); }
     ctx.closePath(); ctx.fill();
-    ctx.fillText(m.dir, x - 10, isBuy ? y + 12 : y - 10);
+    // text only if it won't run into the previous same-side label
+    const lastX = isBuy ? lastBuyTextX : lastSellTextX;
+    if (x - lastX >= 30) {
+      ctx.fillText(m.dir, x - 10, isBuy ? y + 12 : y - 10);
+      if (isBuy) lastBuyTextX = x; else lastSellTextX = x;
+    }
   }
-  // time labels
-  ctx.fillStyle = '#8a94a8';
-  const step = Math.max(1, Math.floor(N / 6));
-  for (let i = 0; i < bs.length; i += step) {
-    const d = new Date(bs[i].t * 1000);
-    const lbl = state.tf === '1d'
+  // time labels — bar OPEN time in Pacific; step chosen from measured width so
+  // labels can never overlap, and the last label is clamped inside the plot.
+  ctx.fillStyle = '#8a94a8'; ctx.font = '10px system-ui';
+  const timeLbl = (t) => {
+    const d = new Date(t * 1000);
+    return state.tf === '1d'
       ? d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: 'America/Los_Angeles' })
-      : d.toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: false, timeZone: 'America/Los_Angeles' });
-    ctx.fillText(lbl, X(i) - 24, H - 8);
+      : d.toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hourCycle: 'h23', timeZone: 'America/Los_Angeles' });
+  };
+  const widest = Math.max(...bs.map((b) => ctx.measureText(timeLbl(b.t)).width));
+  const step = Math.max(1, Math.ceil((widest + 16) / cw));
+  const plotRight = W - pad.r;
+  for (let i = 0; i < bs.length; i += step) {
+    const lbl = timeLbl(bs[i].t);
+    let x = X(i) - ctx.measureText(lbl).width / 2;
+    if (x + ctx.measureText(lbl).width > plotRight - 2) x = plotRight - 2 - ctx.measureText(lbl).width;
+    if (x < pad.l) continue;
+    ctx.fillText(lbl, x, H - 8);
   }
   const isLive = state.wsLive && state.data.symbols[state.symbol]?.market === 'crypto';
   $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset`;
@@ -540,6 +604,7 @@ function render() {
   const s = state.data.symbols[state.symbol];
   const last = state.liveBars[state.liveBars.length - 1];
   $('pxpill').innerHTML = s ? `${s.name} <b>${fmtP(state.symbol, last ? last.c : null)}</b>` : '—';
+  refreshCryptoLive(); // crypto: replace published bars with live Coinbase candles
   const src = { crypto: 'Coinbase', stocks: 'Yahoo Finance', forex: 'Yahoo Finance' };
   $('srcs').textContent = `Sources: crypto — Coinbase public candles; stocks & forex — Yahoo Finance. Nothing simulated.`;
 }
@@ -725,7 +790,7 @@ document.querySelectorAll('#modes button').forEach((b) => {
 });
 window.addEventListener('resize', () => drawChart(state.liveBars, analyze(state.liveBars, state.mode)));
 (async () => {
-  try { await loadData(); connectWS(); jRender(); setInterval(pollData, 60000); }
+  try { await loadData(); connectWS(); jRender(); setInterval(pollData, 60000); setInterval(refreshCryptoLive, 60000); }
   catch (e) { $('asof').textContent = 'waiting for first data publish…'; }
 })();
 // Poll for a fresh publish every 60s; rebase silently (keeps zoom) when it arrives.
