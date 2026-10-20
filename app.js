@@ -453,6 +453,26 @@ function findTriangle(bars) {
   return null;
 }
 
+/* ---------------- last closed bar verdict ---------------- */
+// Where the most recently FINISHED bar closed inside its own high–low range:
+// close in the upper half of the range = CLOSED IN TOP, lower half = CLOSED
+// IN BOTTOM. The still-forming bar is never judged — on the live chart the
+// bar that gets judged is exactly the second-to-last one, and the verdict
+// flips the moment that bar finishes. Returns null when no bar has finished
+// yet, or when the finished bar never moved (no top/bottom to speak of).
+function lastClosedVerdict(bars, tf) {
+  const tfS = TFSEC[tf] || 900;
+  const nowMs = Date.now();
+  for (let i = bars.length - 1; i >= 0; i--) {
+    const b = bars[i];
+    if ((b.t + tfS) * 1000 > nowMs) continue; // still forming — not judged
+    if (!(b.h > b.l)) return null;
+    const pos = (b.c - b.l) / (b.h - b.l);
+    return { bar: b, pos, inTop: pos >= 0.5 };
+  }
+  return null;
+}
+
 /* ---------------- chart ---------------- */
 function drawChart(bars, sig) {
   const cv = $('chart'), ctx = cv.getContext('2d');
@@ -669,6 +689,27 @@ function drawChart(bars, sig) {
     ctx.moveTo(hx, Y(bs[state._hoverI].h)); ctx.lineTo(hx, Y(bs[state._hoverI].l));
     ctx.stroke();
     ctx.strokeRect(hx - bw / 2 - 1, Y(bs[state._hoverI].h), bw + 2, Y(bs[state._hoverI].l) - Y(bs[state._hoverI].h));
+  }
+  // last closed bar verdict — large letters across the top of the plot. It
+  // names the bar that just finished (the small line underneath says which
+  // bar and how far up its range the close landed) and stays up until the
+  // next bar closes and replaces it.
+  const verdict = lastClosedVerdict(bars, state.tf);
+  if (verdict) {
+    const label = verdict.inTop ? 'CLOSED IN TOP' : 'CLOSED IN BOTTOM';
+    const plotW = W - pad.l - pad.r;
+    let fs = 30;
+    ctx.font = `800 ${fs}px system-ui`;
+    const tw = ctx.measureText(label).width;
+    if (tw > plotW - 16) { fs = Math.max(15, Math.floor(fs * (plotW - 16) / tw)); ctx.font = `800 ${fs}px system-ui`; }
+    ctx.textAlign = 'center';
+    ctx.shadowColor = 'rgba(255,255,255,.9)'; ctx.shadowBlur = 7;
+    ctx.fillStyle = verdict.inTop ? '#16a34a' : '#dc2626';
+    ctx.fillText(label, pad.l + plotW / 2, pad.t + fs + 4);
+    ctx.shadowBlur = 0;
+    ctx.font = '600 11px system-ui'; ctx.fillStyle = '#5b6478';
+    ctx.fillText(`${timeLblOf(verdict.bar.t, state.tf)} PT bar · close ${Math.round(verdict.pos * 100)}% of the way up its range`, pad.l + plotW / 2, pad.t + fs + 22);
+    ctx.textAlign = 'left';
   }
   const isLive = state.wsLive && state.data.symbols[state.symbol]?.market === 'crypto';
   $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset, hover a candle for a plain-English read`;
@@ -1125,7 +1166,7 @@ function onTrade(pid, price, size, timeISO) {
   const s = state.data.symbols[state.symbol];
   $('pxpill').innerHTML = `${s.name} <b>${fmtP(state.symbol, price)}</b> <span class="muted">live</span>`;
   const now = Date.now();
-  if (now - state.lastDraw > 500) {
+  if (newCandle || now - state.lastDraw > 500) { // a bar close redraws NOW, never waits on the 500ms tick throttle
     state.lastDraw = now;
     drawChart(bars, analyze(bars, state.mode));
     if (newCandle) { // refresh panels on candle close
@@ -1162,6 +1203,19 @@ function connectWS() {
   open();
 }
 
+/* Bar-close snap refresh: even when no trade prints in the first seconds of
+   a new bar, land a REST refresh just after each bar boundary so the
+   CLOSED IN TOP / CLOSED IN BOTTOM verdict flips the moment the bar
+   finishes. Re-arms itself every bar and follows timeframe switches (it
+   re-reads state.tf each round). No-op for stocks/forex — their verdict
+   updates when the next published file lands instead. */
+function scheduleBoundaryRefresh() {
+  const sec = TFSEC[state.tf] || 900;
+  const nowS = Date.now() / 1000;
+  const nextClose = (Math.floor(nowS / sec) + 1) * sec;
+  setTimeout(() => { refreshCryptoLive(); scheduleBoundaryRefresh(); }, Math.max(300, (nextClose - nowS) * 1000 + 300));
+}
+
 /* ---------------- init ---------------- */
 document.querySelectorAll('#modes button').forEach((b) => {
   b.onclick = () => {
@@ -1191,7 +1245,7 @@ if (triBtn) {
 }
 window.addEventListener('resize', () => drawChart(state.liveBars, analyze(state.liveBars, state.mode)));
 (async () => {
-  try { await loadData(); connectWS(); jRender(); setInterval(pollData, 60000); setInterval(refreshCryptoLive, 60000); setInterval(refreshKalshiTarget, 60000); }
+  try { await loadData(); connectWS(); scheduleBoundaryRefresh(); jRender(); setInterval(pollData, 60000); setInterval(refreshCryptoLive, 60000); setInterval(refreshKalshiTarget, 60000); }
   catch (e) { $('asof').textContent = 'waiting for first data publish…'; }
 })();
 // Poll for a fresh publish every 60s; rebase silently (keeps zoom) when it arrives.
