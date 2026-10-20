@@ -4,7 +4,7 @@
 const DATA_URL = 'https://raw.githubusercontent.com/MisoPrettyStacks/chartlens/data/bars.json';
 const $ = (id) => document.getElementById(id);
 const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [],
-  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { sym: null, t0: null, v: null }, lastPrice: null, _hoverI: null, _geom: null,
+  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, lastPrice: null, _hoverI: null, _geom: null,
   showTriangles: (() => { try { return localStorage.getItem('chartlens.triangles') === '1'; } catch { return false; } })(), _tri: null, _triHover: false };
 const TFSEC = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '6h': 21600, '12h': 43200, '1d': 86400 };
 const defaultN = (tf) => tf === '1m' ? 120 : tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : tf === '6h' ? 120 : tf === '12h' ? 120 : 180;
@@ -144,34 +144,6 @@ async function refreshCryptoLive() {
     const last = bars[bars.length - 1];
     state.lastPrice = last.c;
     $('pxpill').innerHTML = `${s.name} <b>${fmtP(state.symbol, last.c)}</b>`;
-  } catch {}
-}
-
-/* Kalshi target (black dashed line): the current 15-min window's reference
-   price. Kalshi's API blocks browser origins, so — same as the arena pages —
-   it's the typical price (h+l+c)/3 of the Coinbase 1-minute bar in the minute
-   before the window opened, standing in for Kalshi's 60-second average. */
-const KALSHI_SYMS = ['BTC-USD', 'ETH-USD', 'XRP-USD', 'SOL-USD'];
-async function refreshKalshiTarget() {
-  const sym = state.symbol;
-  if (!KALSHI_SYMS.includes(sym)) { state.kalshi = { sym: null, t0: null, v: null }; return; }
-  const t0 = Math.floor(Date.now() / 1000 / 900) * 900;
-  // cache is keyed on SYMBOL + window — a stale target from another symbol
-  // would nuke the price scale (e.g. BTC's ~$81k on XRP's $1.30 chart)
-  if (state.kalshi.sym === sym && state.kalshi.t0 === t0 && state.kalshi.v != null) return;
-  state.kalshi = { sym, t0, v: null }; // clear the old symbol's target right away
-  if (state.liveBars.length) drawChart(state.liveBars, analyze(state.liveBars, state.mode));
-  try {
-    const r = await fetch(`https://api.exchange.coinbase.com/products/${sym}/candles?granularity=60`);
-    if (!r.ok) return;
-    const raw = await r.json();
-    if (!Array.isArray(raw)) return;
-    const bar = raw.find(([t]) => t === t0 - 60);
-    if (!bar) return;
-    const [, l, h, , c] = bar;
-    if (state.symbol !== sym) return; // switched away mid-fetch — don't paint a stale target
-    state.kalshi = { sym, t0, v: (h + l + c) / 3 };
-    if (state.liveBars.length) drawChart(state.liveBars, analyze(state.liveBars, state.mode));
   } catch {}
 }
 
@@ -453,26 +425,6 @@ function findTriangle(bars) {
   return null;
 }
 
-/* ---------------- last closed bar verdict ---------------- */
-// Where the most recently FINISHED bar closed inside its own high–low range:
-// close in the upper half of the range = CLOSED IN TOP, lower half = CLOSED
-// IN BOTTOM. The still-forming bar is never judged — on the live chart the
-// bar that gets judged is exactly the second-to-last one, and the verdict
-// flips the moment that bar finishes. Returns null when no bar has finished
-// yet, or when the finished bar never moved (no top/bottom to speak of).
-function lastClosedVerdict(bars, tf) {
-  const tfS = TFSEC[tf] || 900;
-  const nowMs = Date.now();
-  for (let i = bars.length - 1; i >= 0; i--) {
-    const b = bars[i];
-    if ((b.t + tfS) * 1000 > nowMs) continue; // still forming — not judged
-    if (!(b.h > b.l)) return null;
-    const pos = (b.c - b.l) / (b.h - b.l);
-    return { bar: b, pos, inTop: pos >= 0.5 };
-  }
-  return null;
-}
-
 /* ---------------- chart ---------------- */
 function drawChart(bars, sig) {
   const cv = $('chart'), ctx = cv.getContext('2d');
@@ -513,8 +465,6 @@ function drawChart(bars, sig) {
     if (sig.levels) for (const s of sig.levels.sup) zones.push({ v: s, c: '#16a34a', dash: [2, 4], label: '' });
     zones.push({ v: sig.entry, c: '#4f46e5', dash: [], label: 'ENTRY' });
   }
-  if (state.kalshi && state.kalshi.sym === state.symbol && state.kalshi.v != null)
-    zones.push({ v: state.kalshi.v, c: '#111111', dash: [7, 5], label: 'KALSHI TARGET' });
   // live price line (blue dashed): latest streamed trade, falls back to last close
   const liveV = state.lastPrice != null ? state.lastPrice : (bs.length ? bs[bs.length - 1].c : null);
   if (liveV != null) zones.push({ v: liveV, c: '#2563eb', dash: [4, 3], label: 'LIVE' });
@@ -690,31 +640,9 @@ function drawChart(bars, sig) {
     ctx.stroke();
     ctx.strokeRect(hx - bw / 2 - 1, Y(bs[state._hoverI].h), bw + 2, Y(bs[state._hoverI].l) - Y(bs[state._hoverI].h));
   }
-  // last closed bar verdict — large letters across the top of the plot. It
-  // names the bar that just finished (the small line underneath says which
-  // bar and how far up its range the close landed) and stays up until the
-  // next bar closes and replaces it.
-  const verdict = lastClosedVerdict(bars, state.tf);
-  if (verdict) {
-    const label = verdict.inTop ? 'CLOSED IN TOP' : 'CLOSED IN BOTTOM';
-    const plotW = W - pad.l - pad.r;
-    let fs = 30;
-    ctx.font = `800 ${fs}px system-ui`;
-    const tw = ctx.measureText(label).width;
-    if (tw > plotW - 16) { fs = Math.max(15, Math.floor(fs * (plotW - 16) / tw)); ctx.font = `800 ${fs}px system-ui`; }
-    ctx.textAlign = 'center';
-    ctx.shadowColor = 'rgba(255,255,255,.9)'; ctx.shadowBlur = 7;
-    ctx.fillStyle = verdict.inTop ? '#16a34a' : '#dc2626';
-    ctx.fillText(label, pad.l + plotW / 2, pad.t + fs + 4);
-    ctx.shadowBlur = 0;
-    ctx.font = '600 11px system-ui'; ctx.fillStyle = '#5b6478';
-    ctx.fillText(`${timeLblOf(verdict.bar.t, state.tf)} PT bar · close ${Math.round(verdict.pos * 100)}% of the way up its range`, pad.l + plotW / 2, pad.t + fs + 22);
-    ctx.textAlign = 'left';
-  }
   const isLive = state.wsLive && state.data.symbols[state.symbol]?.market === 'crypto';
   $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset, hover a candle for a plain-English read`;
   $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>` +
-    ((state.kalshi && state.kalshi.sym === state.symbol && state.kalshi.v != null) ? `<span><b style="color:#111">- -</b> Kalshi target</span>` : ``) +
     (liveV != null ? `<span><b style="color:#2563eb">- -</b> live price</span>` : ``) +
     (tri ? `<span><b style="color:#7c3aed">—</b> triangle pattern</span>` : ``);
 }
@@ -1014,7 +942,6 @@ function renderFeed() {
   }).join('');
 }
 function render() {
-  refreshKalshiTarget();
   state.bars = getBars();
   state.liveBars = state.bars.map((b) => ({ ...b }));
   state.view = { n: null, off: 0 };
@@ -1166,7 +1093,7 @@ function onTrade(pid, price, size, timeISO) {
   const s = state.data.symbols[state.symbol];
   $('pxpill').innerHTML = `${s.name} <b>${fmtP(state.symbol, price)}</b> <span class="muted">live</span>`;
   const now = Date.now();
-  if (newCandle || now - state.lastDraw > 500) { // a bar close redraws NOW, never waits on the 500ms tick throttle
+  if (now - state.lastDraw > 500) {
     state.lastDraw = now;
     drawChart(bars, analyze(bars, state.mode));
     if (newCandle) { // refresh panels on candle close
@@ -1203,19 +1130,6 @@ function connectWS() {
   open();
 }
 
-/* Bar-close snap refresh: even when no trade prints in the first seconds of
-   a new bar, land a REST refresh just after each bar boundary so the
-   CLOSED IN TOP / CLOSED IN BOTTOM verdict flips the moment the bar
-   finishes. Re-arms itself every bar and follows timeframe switches (it
-   re-reads state.tf each round). No-op for stocks/forex — their verdict
-   updates when the next published file lands instead. */
-function scheduleBoundaryRefresh() {
-  const sec = TFSEC[state.tf] || 900;
-  const nowS = Date.now() / 1000;
-  const nextClose = (Math.floor(nowS / sec) + 1) * sec;
-  setTimeout(() => { refreshCryptoLive(); scheduleBoundaryRefresh(); }, Math.max(300, (nextClose - nowS) * 1000 + 300));
-}
-
 /* ---------------- init ---------------- */
 document.querySelectorAll('#modes button').forEach((b) => {
   b.onclick = () => {
@@ -1245,7 +1159,7 @@ if (triBtn) {
 }
 window.addEventListener('resize', () => drawChart(state.liveBars, analyze(state.liveBars, state.mode)));
 (async () => {
-  try { await loadData(); connectWS(); scheduleBoundaryRefresh(); jRender(); setInterval(pollData, 60000); setInterval(refreshCryptoLive, 60000); setInterval(refreshKalshiTarget, 60000); }
+  try { await loadData(); connectWS(); jRender(); setInterval(pollData, 60000); setInterval(refreshCryptoLive, 60000); }
   catch (e) { $('asof').textContent = 'waiting for first data publish…'; }
 })();
 // Poll for a fresh publish every 60s; rebase silently (keeps zoom) when it arrives.
