@@ -11,6 +11,13 @@ const defaultN = (tf) => tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 1
 const DECIMALS = { 'BTC-USD': 2, 'ETH-USD': 2, 'XRP-USD': 4, 'SOL-USD': 2, 'EURUSD=X': 5, 'GBPUSD=X': 5, 'USDJPY=X': 3 };
 const dec = (s) => DECIMALS[s] ?? 2;
 const fmtP = (s, v) => v == null || !isFinite(v) ? '—' : v.toFixed(dec(s));
+// bottom-axis time label (bar open time, Pacific) — shared by gridlines + labels
+const timeLblOf = (t, tf) => {
+  const d = new Date(t * 1000);
+  return tf === '1d'
+    ? d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: 'America/Los_Angeles' })
+    : d.toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hourCycle: 'h23', timeZone: 'America/Los_Angeles' });
+};
 
 /* ---------------- data ---------------- */
 async function loadData() {
@@ -366,6 +373,18 @@ function drawChart(bars, sig) {
     ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
     ctx.fillText(v.toFixed(dec(state.symbol)), W - pad.r + 4, y + 3);
   }
+  // vertical time gridlines — shared positions with the bottom time labels,
+  // extended CONE slots past the last candle so the axis runs into the future
+  const tfSec = TFSEC[state.tf] || 900;
+  const timeAt = (i) => i < bs.length ? bs[i].t : bs[bs.length - 1].t + (i - bs.length + 1) * tfSec;
+  const widestLbl = Math.max(...bs.map((b) => ctx.measureText(timeLblOf(b.t)).width));
+  const tStep = Math.max(1, Math.ceil((widestLbl + 16) / cw));
+  const gridIdx = [];
+  for (let i = 0; i < bs.length + CONE; i += tStep) gridIdx.push(i);
+  for (const i of gridIdx) {
+    const x = X(i);
+    ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, H - pad.b); ctx.stroke();
+  }
   // bollinger band
   ctx.beginPath();
   let started = false;
@@ -461,20 +480,12 @@ function drawChart(bars, sig) {
       if (isBuy) lastBuyTextX = x; else lastSellTextX = x;
     }
   }
-  // time labels — bar OPEN time in Pacific; step chosen from measured width so
-  // labels can never overlap, and the last label is clamped inside the plot.
+  // time labels — drawn at the gridline positions (gridIdx), including the
+  // future slots past the last candle; each clamped inside the plot.
   ctx.fillStyle = '#8a94a8'; ctx.font = '10px system-ui';
-  const timeLbl = (t) => {
-    const d = new Date(t * 1000);
-    return state.tf === '1d'
-      ? d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', timeZone: 'America/Los_Angeles' })
-      : d.toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hourCycle: 'h23', timeZone: 'America/Los_Angeles' });
-  };
-  const widest = Math.max(...bs.map((b) => ctx.measureText(timeLbl(b.t)).width));
-  const step = Math.max(1, Math.ceil((widest + 16) / cw));
   const plotRight = W - pad.r;
-  for (let i = 0; i < bs.length; i += step) {
-    const lbl = timeLbl(bs[i].t);
+  for (const i of gridIdx) {
+    const lbl = timeLblOf(timeAt(i), state.tf);
     let x = X(i) - ctx.measureText(lbl).width / 2;
     if (x + ctx.measureText(lbl).width > plotRight - 2) x = plotRight - 2 - ctx.measureText(lbl).width;
     if (x < pad.l) continue;
