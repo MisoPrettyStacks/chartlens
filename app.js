@@ -770,7 +770,9 @@ function triHoverAt(g, x, y) {
   const effI = Math.min(tri.apexI, capFull);
   const effPrice = (tri.hiAt(effI) + tri.loAt(effI)) / 2;
   const ax = g.pad.l + (effI - g.startIdx + 0.5) * g.cw, ay = Yp(effPrice);
-  if (Math.hypot(x - ax, y - ay) <= 14)
+  // forgiving zone around the pointed end — the lines converge to a sliver
+  // there, so a tight radius would make the tip nearly impossible to hit
+  if (Math.abs(x - ax) <= 24 && Math.abs(y - ay) <= 17)
     return { kind: 'apex', tri, price: tri.hiAt(tri.apexI) };
   const dHi = Math.abs(y - Yp(tri.hiAt(gx))), dLo = Math.abs(y - Yp(tri.loAt(gx)));
   if (Math.min(dHi, dLo) <= 7)
