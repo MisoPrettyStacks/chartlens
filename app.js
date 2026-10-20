@@ -775,8 +775,19 @@ function triHoverAt(g, x, y) {
   if (Math.abs(x - ax) <= 24 && Math.abs(y - ay) <= 17)
     return { kind: 'apex', tri, price: tri.hiAt(tri.apexI) };
   const dHi = Math.abs(y - Yp(tri.hiAt(gx))), dLo = Math.abs(y - Yp(tri.loAt(gx)));
-  if (Math.min(dHi, dLo) <= 7)
-    return { kind: dHi <= dLo ? 'hi' : 'lo', tri, price: dHi <= dLo ? tri.hiAt(gx) : tri.loAt(gx) };
+  if (Math.min(dHi, dLo) <= 7) {
+    // clock time of the exact spot being hovered (extends past the last
+    // candle when the lines run into the projection cone)
+    const barsArr = state.liveBars || [];
+    let tLbl = '';
+    if (barsArr.length) {
+      const tfS = TFSEC[state.tf] || 900;
+      const bi = Math.max(0, Math.min(Math.floor(gx), barsArr.length - 1));
+      const tt = barsArr[bi].t + (gx - bi) * tfS;
+      tLbl = timeLblOf(tt, state.tf) + ' PT';
+    }
+    return { kind: dHi <= dLo ? 'hi' : 'lo', tri, price: dHi <= dLo ? tri.hiAt(gx) : tri.loAt(gx), tLbl };
+  }
   return null;
 }
 function showTriTip(cv, hit, x, y, rect) {
@@ -794,10 +805,10 @@ function showTriTip(cv, hit, x, y, rect) {
     body = `<p>This is the tip of the triangle — the point where the ceiling line and the floor line meet. If the squeeze kept going, the two lines would cross at about <b>${price}</b>${when ? `, around ${when}` : ''}.</p>`;
   } else if (hit.kind === 'hi') {
     head = `${tri.type} · top line`;
-    body = `<p>This is the top line of the triangle — the ceiling the recent highs keep bumping into. Right where you're hovering, that ceiling sits at <b>${price}</b>.</p>`;
+    body = `<p>This is the top line of the triangle — the ceiling the recent highs keep bumping into. Right where you're hovering, that ceiling sits at <b>${price}</b>${hit.tLbl ? ` — that spot on the line is at <b>${hit.tLbl}</b>` : ''}.</p>`;
   } else {
     head = `${tri.type} · bottom line`;
-    body = `<p>This is the bottom line of the triangle — the floor the recent lows keep bouncing off. Right where you're hovering, that floor sits at <b>${price}</b>.</p>`;
+    body = `<p>This is the bottom line of the triangle — the floor the recent lows keep bouncing off. Right where you're hovering, that floor sits at <b>${price}</b>${hit.tLbl ? ` — that spot on the line is at <b>${hit.tLbl}</b>` : ''}.</p>`;
   }
   tip.innerHTML = `<div class="ct-head"><b>${head}</b><span class="ct-badge flat">${price}</span></div>` + body +
     `<div class="ct-foot">The price of the line itself at this spot — the lines describe the pattern, they don't predict where price goes next.</div>`;
