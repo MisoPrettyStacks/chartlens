@@ -764,8 +764,13 @@ function triHoverAt(g, x, y) {
   const gx = g.startIdx + (x - g.pad.l) / g.cw - 0.5;
   if (gx < fromFull - 0.5 || gx > capFull + 0.5) return null;
   const Yp = (v) => g.pad.t + (1 - (v - g.lo) / (g.hi - g.lo)) * (g.H - g.pad.t - g.pad.b);
-  const ax = g.pad.l + (tri.apexI - g.startIdx + 0.5) * g.cw, ay = Yp(tri.hiAt(tri.apexI));
-  if (tri.apexI <= capFull + 0.5 && Math.hypot(x - ax, y - ay) <= 12)
+  // the tip hotspot is the visible pointed end of the lines: when the exact
+  // crossing sits a little past the right edge, the lines still visibly
+  // converge to the edge — hovering that end counts as hovering the tip
+  const effI = Math.min(tri.apexI, capFull);
+  const effPrice = (tri.hiAt(effI) + tri.loAt(effI)) / 2;
+  const ax = g.pad.l + (effI - g.startIdx + 0.5) * g.cw, ay = Yp(effPrice);
+  if (Math.hypot(x - ax, y - ay) <= 14)
     return { kind: 'apex', tri, price: tri.hiAt(tri.apexI) };
   const dHi = Math.abs(y - Yp(tri.hiAt(gx))), dLo = Math.abs(y - Yp(tri.loAt(gx)));
   if (Math.min(dHi, dLo) <= 7)
