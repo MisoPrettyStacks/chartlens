@@ -5,7 +5,7 @@ const DATA_URL = 'https://raw.githubusercontent.com/MisoPrettyStacks/chartlens/d
 const $ = (id) => document.getElementById(id);
 const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [],
   liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { sym: null, t0: null, v: null }, lastPrice: null, _hoverI: null, _geom: null,
-  showTriangles: (() => { try { return localStorage.getItem('chartlens.triangles') === '1'; } catch { return false; } })() };
+  showTriangles: (() => { try { return localStorage.getItem('chartlens.triangles') === '1'; } catch { return false; } })(), _tri: null, _triHover: false };
 const TFSEC = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 const defaultN = (tf) => tf === '1m' ? 120 : tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : 180;
 
@@ -566,6 +566,7 @@ function drawChart(bars, sig) {
   // triangle pattern, when toggled on: shaded shape plus both trendlines
   // extended toward the point where they would meet, labeled by name
   const tri = state.showTriangles ? findTriangle(bars) : null;
+  state._tri = tri; // kept so mouse hover can price the lines and the tip
   if (tri) {
     const viFrom = Math.max(tri.startI - startIdx, 0);
     const fromFull = startIdx + viFrom;
@@ -737,6 +738,62 @@ function hideCandleTip() {
   const tip = $('candleTip');
   if (tip) tip.style.display = 'none';
   state._hoverI = null;
+  state._triHover = false;
+}
+// position the tooltip next to the mouse, flipped when it would overflow
+function placeTip(tip, x, y, rect) {
+  let left = x + 16, top = y + 16;
+  if (left + tip.offsetWidth > rect.width - 6) left = x - tip.offsetWidth - 16;
+  if (top + tip.offsetHeight > rect.height - 6) top = y - tip.offsetHeight - 16;
+  tip.style.left = Math.max(2, left) + 'px';
+  tip.style.top = Math.max(2, top) + 'px';
+}
+/* Hovering the triangle itself: anywhere along either trendline shows that
+   line's price at that exact spot; hovering the tip (apex) shows the price
+   where the two lines meet, and when they would meet. */
+function triHoverAt(g, x, y) {
+  const tri = state._tri;
+  if (!tri || !state.showTriangles) return null;
+  const plotSlots = (g.W - g.pad.l - g.pad.r) / g.cw;
+  const fromFull = Math.max(tri.startI, g.startIdx);
+  const capFull = Math.min(tri.apexI, g.startIdx + plotSlots - 1);
+  const gx = g.startIdx + (x - g.pad.l) / g.cw - 0.5;
+  if (gx < fromFull - 0.5 || gx > capFull + 0.5) return null;
+  const Yp = (v) => g.pad.t + (1 - (v - g.lo) / (g.hi - g.lo)) * (g.H - g.pad.t - g.pad.b);
+  const ax = g.pad.l + (tri.apexI - g.startIdx + 0.5) * g.cw, ay = Yp(tri.hiAt(tri.apexI));
+  if (tri.apexI <= capFull + 0.5 && Math.hypot(x - ax, y - ay) <= 12)
+    return { kind: 'apex', tri, price: tri.hiAt(tri.apexI) };
+  const dHi = Math.abs(y - Yp(tri.hiAt(gx))), dLo = Math.abs(y - Yp(tri.loAt(gx)));
+  if (Math.min(dHi, dLo) <= 7)
+    return { kind: dHi <= dLo ? 'hi' : 'lo', tri, price: dHi <= dLo ? tri.hiAt(gx) : tri.loAt(gx) };
+  return null;
+}
+function showTriTip(cv, hit, x, y, rect) {
+  const tip = $('candleTip');
+  if (!tip) return;
+  const { tri } = hit;
+  const price = fmtP(state.symbol, hit.price);
+  let head, body;
+  if (hit.kind === 'apex') {
+    head = `${tri.type} · the tip`;
+    const tfSec = TFSEC[state.tf] || 900;
+    const lastBar = state.liveBars[tri.endI];
+    const when = lastBar ? new Date((lastBar.t + (tri.apexI - tri.endI) * tfSec) * 1000)
+      .toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit', hourCycle: 'h23', timeZone: 'America/Los_Angeles' }) + ' PT' : '';
+    body = `<p>This is the tip of the triangle — the point where the ceiling line and the floor line meet. If the squeeze kept going, the two lines would cross at about <b>${price}</b>${when ? `, around ${when}` : ''}.</p>`;
+  } else if (hit.kind === 'hi') {
+    head = `${tri.type} · top line`;
+    body = `<p>This is the top line of the triangle — the ceiling the recent highs keep bumping into. Right where you're hovering, that ceiling sits at <b>${price}</b>.</p>`;
+  } else {
+    head = `${tri.type} · bottom line`;
+    body = `<p>This is the bottom line of the triangle — the floor the recent lows keep bouncing off. Right where you're hovering, that floor sits at <b>${price}</b>.</p>`;
+  }
+  tip.innerHTML = `<div class="ct-head"><b>${head}</b><span class="ct-badge flat">${price}</span></div>` + body +
+    `<div class="ct-foot">The price of the line itself at this spot — the lines describe the pattern, they don't predict where price goes next.</div>`;
+  tip.style.display = 'block';
+  if (state._hoverI != null) { state._hoverI = null; drawChart(state.liveBars, analyze(state.liveBars, state.mode)); }
+  state._triHover = true;
+  placeTip(tip, x, y, rect);
 }
 
 /* ---------------- mouse: wheel zoom, drag pan, double-click reset ---------------- */
@@ -765,14 +822,19 @@ function hideCandleTip() {
     state.view = { n: null, off: 0 };
     drawChart(state.liveBars, analyze(state.liveBars, state.mode));
   });
-  // hover: map the mouse x to a candle, explain it in plain words, and keep
-  // the tooltip inside the chart box (flip side near the edges)
+  // hover: the triangle lines/tip get priced first; otherwise map the mouse
+  // x to a candle and explain it in plain words
   cv.addEventListener('mousemove', (e) => {
     if (dragX != null || !state._geom || !state.liveBars.length) return;
     const g = state._geom, tip = $('candleTip');
     if (!tip) return;
     const rect = cv.getBoundingClientRect();
     const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    if (x >= g.pad.l && x <= g.W - g.pad.r && y >= g.pad.t && y <= g.H - g.pad.b) {
+      const hit = triHoverAt(g, x, y);
+      if (hit) { showTriTip(cv, hit, x, y, rect); return; }
+    }
+    if (state._triHover) hideCandleTip(); // slid off the lines — back to candle hover
     const i = Math.round((x - g.pad.l) / g.cw - 0.5);
     if (i < 0 || i >= g.bs.length || y < g.pad.t || y > g.H - g.pad.b) {
       if (state._hoverI != null) { hideCandleTip(); drawChart(state.liveBars, analyze(state.liveBars, state.mode)); }
@@ -786,15 +848,10 @@ function hideCandleTip() {
       tip.style.display = 'block';
       drawChart(state.liveBars, analyze(state.liveBars, state.mode));
     }
-    // position next to the mouse, flipped when it would overflow the chart
-    let left = x + 16, top = y + 16;
-    if (left + tip.offsetWidth > rect.width - 6) left = x - tip.offsetWidth - 16;
-    if (top + tip.offsetHeight > rect.height - 6) top = y - tip.offsetHeight - 16;
-    tip.style.left = Math.max(2, left) + 'px';
-    tip.style.top = Math.max(2, top) + 'px';
+    placeTip(tip, x, y, rect);
   });
   cv.addEventListener('mouseleave', () => {
-    if (state._hoverI != null) { hideCandleTip(); drawChart(state.liveBars, analyze(state.liveBars, state.mode)); }
+    if (state._hoverI != null || state._triHover) { const had = state._hoverI != null; hideCandleTip(); if (had) drawChart(state.liveBars, analyze(state.liveBars, state.mode)); }
   });
 })();
 
