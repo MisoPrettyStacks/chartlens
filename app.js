@@ -4,9 +4,10 @@
 const DATA_URL = 'https://raw.githubusercontent.com/MisoPrettyStacks/chartlens/data/bars.json';
 const $ = (id) => document.getElementById(id);
 const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [],
-  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { sym: null, t0: null, v: null }, lastPrice: null, _hoverI: null, _geom: null };
-const TFSEC = { '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
-const defaultN = (tf) => tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : 180;
+  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { sym: null, t0: null, v: null }, lastPrice: null, _hoverI: null, _geom: null,
+  showTriangles: (() => { try { return localStorage.getItem('chartlens.triangles') === '1'; } catch { return false; } })() };
+const TFSEC = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
+const defaultN = (tf) => tf === '1m' ? 120 : tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : 180;
 
 const DECIMALS = { 'BTC-USD': 2, 'ETH-USD': 2, 'XRP-USD': 4, 'SOL-USD': 2, 'EURUSD=X': 5, 'GBPUSD=X': 5, 'USDJPY=X': 3 };
 const dec = (s) => DECIMALS[s] ?? 2;
@@ -63,13 +64,16 @@ function buildSyms() {
   }
   const tfs = $('tfs'); tfs.innerHTML = '';
   const avail = state.data.symbols[state.symbol]?.tfs || {};
-  for (const tf of ['5m', '15m', '1h', '1d']) {
+  // crypto timeframes all come straight from Coinbase live, so every frame is
+  // available even when the published file doesn't carry it (notably 1m)
+  const isCrypto = state.data.symbols[state.symbol]?.market === 'crypto';
+  for (const tf of ['1m', '5m', '15m', '1h', '1d']) {
     const b = document.createElement('button');
     b.textContent = tf;
     b.className = state.tf === tf ? 'on' : '';
-    b.disabled = !avail[tf];
-    b.style.opacity = avail[tf] ? 1 : 0.35;
-    b.title = avail[tf] ? '' : 'not published for this symbol';
+    b.disabled = !(avail[tf] || isCrypto);
+    b.style.opacity = b.disabled ? 0.35 : 1;
+    b.title = b.disabled ? 'not published for this symbol' : '';
     b.onclick = () => { state.tf = tf; hideCandleTip(); render(); };
     tfs.appendChild(b);
   }
@@ -79,7 +83,7 @@ function selectSymbol(id) {
   state.lastPrice = null; // no stale live price from the previous symbol
   const s = state.data.symbols[id];
   if (s && s.market !== state.market) { state.market = s.market; buildMarkets(); }
-  if (s && !s.tfs[state.tf]) state.tf = '15m'; // extended symbols skip 5m
+  if (s && s.market !== 'crypto' && !s.tfs[state.tf]) state.tf = '15m'; // extended symbols skip 5m; crypto frames all come live from Coinbase
   hideCandleTip();
   buildSyms();
   render();
@@ -354,6 +358,89 @@ function findMarkers(bars, mode) {
   return out;
 }
 
+/* ---------------- triangle patterns (auto-drawn, toggleable) ---------------- */
+// Looks for a triangle in the recent bars: lines through the latest swing
+// highs and swing lows that squeeze toward each other until they would meet.
+// Least-squares fits over the last few swing points; the pattern only counts
+// when it is long enough, the swing points actually sit near their lines,
+// price is still inside the lines, and the lines meet reasonably soon.
+// Classified by slope: both closing in = symmetrical; top flat + bottom
+// rising = ascending; top falling + bottom flat = descending. It draws the
+// shape the chart is making — it does not predict which way price breaks out.
+function findTriangle(bars) {
+  const n = bars.length;
+  if (n < 60) return null;
+  const k = 2, from = Math.max(0, n - 140);
+  const highs = [], lows = [];
+  for (let i = from + k; i < n - k; i++) {
+    let isH = true, isL = true;
+    for (let j = 1; j <= k; j++) {
+      if (bars[i].h < bars[i - j].h || bars[i].h < bars[i + j].h) isH = false;
+      if (bars[i].l > bars[i - j].l || bars[i].l > bars[i + j].l) isL = false;
+    }
+    if (isH) highs.push({ i, v: bars[i].h });
+    if (isL) lows.push({ i, v: bars[i].l });
+  }
+  if (highs.length < 2 || lows.length < 2) return null;
+  // merge same-side points a couple of bars apart (double tops/bottoms):
+  // keep the more extreme one, so the fits span the pattern's real length
+  const dedupe = (pts, isHigh) => {
+    const out = [];
+    for (const p of pts) {
+      const lastP = out[out.length - 1];
+      if (lastP && p.i - lastP.i <= 2 * k) {
+        if (isHigh ? p.v > lastP.v : p.v < lastP.v) out[out.length - 1] = p;
+      } else out.push(p);
+    }
+    return out;
+  };
+  const swingHighs = dedupe(highs, true), swingLows = dedupe(lows, false);
+  if (swingHighs.length < 2 || swingLows.length < 2) return null;
+  const seg = bars.slice(from);
+  const avgR = seg.reduce((a, b) => a + (b.h - b.l), 0) / Math.max(seg.length, 1);
+  const fit = (pts) => {
+    const cnt = pts.length;
+    const sx = pts.reduce((a, p) => a + p.i, 0), sy = pts.reduce((a, p) => a + p.v, 0);
+    const sxx = pts.reduce((a, p) => a + p.i * p.i, 0), sxy = pts.reduce((a, p) => a + p.i * p.v, 0);
+    const den = cnt * sxx - sx * sx;
+    const slope = den === 0 ? 0 : (cnt * sxy - sx * sy) / den;
+    const icept = (sy - slope * sx) / cnt;
+    return { m: slope, b: icept, at: (x) => slope * x + icept };
+  };
+  for (const take of [4, 3, 2]) {
+    const hp = swingHighs.slice(-take), lp = swingLows.slice(-take);
+    if (hp.length < 2 || lp.length < 2) continue;
+    const hf = fit(hp), lf = fit(lp);
+    const startI = Math.min(hp[0].i, lp[0].i);
+    const endI = n - 1;
+    if (endI - startI < 12) continue; // too short to call a pattern
+    const gapStart = hf.at(startI) - lf.at(startI);
+    const gapEnd = hf.at(endI) - lf.at(endI);
+    if (!(gapStart > 0) || !(gapEnd > 0) || gapEnd > gapStart * 0.95) continue; // lines must be squeezing
+    if (hf.m === lf.m) continue;
+    const apex = (lf.b - hf.b) / (hf.m - lf.m);
+    if (!(apex > endI) || apex - endI > 160) continue; // must meet, and reasonably soon
+    const tol = gapStart * 0.45 + avgR;
+    if (hp.some((p) => Math.abs(p.v - hf.at(p.i)) > tol)) continue;
+    if (lp.some((p) => Math.abs(p.v - lf.at(p.i)) > tol)) continue;
+    const last = bars[endI].c;
+    if (last < lf.at(endI) - gapEnd * 0.1 || last > hf.at(endI) + gapEnd * 0.1) continue; // price still inside
+    // a side counts as sloped when its line travels a real share of the
+    // pattern's starting height across the pattern; otherwise it's flat
+    const span = endI - startI;
+    const FLATV = 0.15 * gapStart;
+    const sideOf = (f) => Math.abs(f.m) * span <= FLATV ? 'flat' : f.m < 0 ? 'falling' : 'rising';
+    const upSide = sideOf(hf), dnSide = sideOf(lf);
+    let type = null;
+    if (upSide === 'falling' && dnSide === 'rising') type = 'Symmetrical triangle';
+    else if (upSide === 'flat' && dnSide === 'rising') type = 'Ascending triangle';
+    else if (upSide === 'falling' && dnSide === 'flat') type = 'Descending triangle';
+    if (!type) continue;
+    return { type, startI, endI, apexI: Math.round(apex), hiAt: hf.at, loAt: lf.at };
+  }
+  return null;
+}
+
 /* ---------------- chart ---------------- */
 function drawChart(bars, sig) {
   const cv = $('chart'), ctx = cv.getContext('2d');
@@ -476,6 +563,29 @@ function drawChart(bars, sig) {
     ctx.fillStyle = '#4f46e5'; ctx.font = '600 10px system-ui';
     ctx.fillText('ATR cone', X(N - 1 + 2), Y(cone.px + cone.atr * Math.sqrt(cone.n)) - 4);
   }
+  // triangle pattern, when toggled on: shaded shape plus both trendlines
+  // extended toward the point where they would meet, labeled by name
+  const tri = state.showTriangles ? findTriangle(bars) : null;
+  if (tri) {
+    const viFrom = Math.max(tri.startI - startIdx, 0);
+    const fromFull = startIdx + viFrom;
+    const viEnd = tri.endI - startIdx;
+    const capFull = Math.min(tri.apexI, startIdx + N + CONE - 1);
+    const viCap = capFull - startIdx;
+    if (viEnd >= 0 && viFrom < N + CONE) {
+      ctx.beginPath();
+      ctx.moveTo(X(viFrom), Y(tri.hiAt(fromFull)));
+      ctx.lineTo(X(viEnd), Y(tri.hiAt(tri.endI)));
+      ctx.lineTo(X(viEnd), Y(tri.loAt(tri.endI)));
+      ctx.lineTo(X(viFrom), Y(tri.loAt(fromFull)));
+      ctx.closePath(); ctx.fillStyle = 'rgba(124,58,237,.07)'; ctx.fill();
+      ctx.strokeStyle = '#7c3aed'; ctx.lineWidth = 1.6; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(X(viFrom), Y(tri.hiAt(fromFull))); ctx.lineTo(X(viCap), Y(tri.hiAt(capFull))); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(X(viFrom), Y(tri.loAt(fromFull))); ctx.lineTo(X(viCap), Y(tri.loAt(capFull))); ctx.stroke();
+      ctx.fillStyle = '#7c3aed'; ctx.font = '600 11px system-ui';
+      ctx.fillText(tri.type, X(viFrom) + 4, Math.max(pad.t + 10, Y(tri.hiAt(fromFull)) - 6));
+    }
+  }
   // zones — text labels are pushed apart vertically so close levels never print over each other
   ctx.font = '600 10px system-ui';
   const zLabels = zones.map((z) => ({ z, y: Y(z.v), ly: Y(z.v) - 4 }));
@@ -547,7 +657,8 @@ function drawChart(bars, sig) {
   $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset, hover a candle for a plain-English read`;
   $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>` +
     ((state.kalshi && state.kalshi.sym === state.symbol && state.kalshi.v != null) ? `<span><b style="color:#111">- -</b> Kalshi target</span>` : ``) +
-    (liveV != null ? `<span><b style="color:#2563eb">- -</b> live price</span>` : ``);
+    (liveV != null ? `<span><b style="color:#2563eb">- -</b> live price</span>` : ``) +
+    (tri ? `<span><b style="color:#7c3aed">—</b> triangle pattern</span>` : ``);
 }
 
 /* ---------------- candle hover: plain-English read of one candle ---------------- */
@@ -560,7 +671,7 @@ function explainCandle(bars, gi) {
   if (!b) return null;
   const sym = state.symbol;
   const tfSec = TFSEC[state.tf] || 900;
-  const durName = { '5m': '5 minutes', '15m': '15 minutes', '1h': '1 hour', '1d': 'this day' }[state.tf] || 'period';
+  const durName = { '1m': '1 minute', '5m': '5 minutes', '15m': '15 minutes', '1h': '1 hour', '1d': 'this day' }[state.tf] || 'period';
   const chg = b.c - b.o;
   const chgPct = b.o ? (chg / b.o) * 100 : 0;
   const range = b.h - b.l;
@@ -968,6 +1079,21 @@ document.querySelectorAll('#modes button').forEach((b) => {
     buildSyms(); render();
   };
 });
+/* triangle pattern toggle: remembered in this browser */
+const triBtn = $('triBtn');
+if (triBtn) {
+  const syncTriBtn = () => {
+    triBtn.textContent = `Triangles: ${state.showTriangles ? 'On' : 'Off'}`;
+    triBtn.classList.toggle('on', state.showTriangles);
+  };
+  triBtn.onclick = () => {
+    state.showTriangles = !state.showTriangles;
+    try { localStorage.setItem('chartlens.triangles', state.showTriangles ? '1' : '0'); } catch {}
+    syncTriBtn();
+    drawChart(state.liveBars, analyze(state.liveBars, state.mode));
+  };
+  syncTriBtn();
+}
 window.addEventListener('resize', () => drawChart(state.liveBars, analyze(state.liveBars, state.mode)));
 (async () => {
   try { await loadData(); connectWS(); jRender(); setInterval(pollData, 60000); setInterval(refreshCryptoLive, 60000); setInterval(refreshKalshiTarget, 60000); }
