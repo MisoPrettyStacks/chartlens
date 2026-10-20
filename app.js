@@ -4,7 +4,7 @@
 const DATA_URL = 'https://raw.githubusercontent.com/MisoPrettyStacks/chartlens/data/bars.json';
 const $ = (id) => document.getElementById(id);
 const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [],
-  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { t0: null, v: null }, lastPrice: null };
+  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { sym: null, t0: null, v: null }, lastPrice: null };
 const TFSEC = { '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 const defaultN = (tf) => tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : 180;
 
@@ -76,6 +76,7 @@ function buildSyms() {
 }
 function selectSymbol(id) {
   state.symbol = id;
+  state.lastPrice = null; // no stale live price from the previous symbol
   const s = state.data.symbols[id];
   if (s && s.market !== state.market) { state.market = s.market; buildMarkets(); }
   if (s && !s.tfs[state.tf]) state.tf = '15m'; // extended symbols skip 5m
@@ -106,10 +107,12 @@ async function fetchCoinbaseBars(id, tf) {
   return raw.map(([t, l, h, o, c, v]) => ({ t, o, h, l, c, v })).sort((a, b) => a.t - b.t);
 }
 async function refreshCryptoLive() {
-  const s = state.data?.symbols[state.symbol];
+  const sym = state.symbol, tf = state.tf;
+  const s = state.data?.symbols[sym];
   if (!s || s.market !== 'crypto') return;
   try {
-    const bars = await fetchCoinbaseBars(state.symbol, state.tf);
+    const bars = await fetchCoinbaseBars(sym, tf);
+    if (state.symbol !== sym || state.tf !== tf) return; // switched away mid-fetch — drop stale bars
     if (!bars || bars.length < 10) return;
     state.bars = bars;
     state.liveBars = bars.map((b) => ({ ...b }));
@@ -133,18 +136,24 @@ async function refreshCryptoLive() {
    before the window opened, standing in for Kalshi's 60-second average. */
 const KALSHI_SYMS = ['BTC-USD', 'ETH-USD', 'XRP-USD', 'SOL-USD'];
 async function refreshKalshiTarget() {
-  if (!KALSHI_SYMS.includes(state.symbol)) { state.kalshi = { t0: null, v: null }; return; }
+  const sym = state.symbol;
+  if (!KALSHI_SYMS.includes(sym)) { state.kalshi = { sym: null, t0: null, v: null }; return; }
   const t0 = Math.floor(Date.now() / 1000 / 900) * 900;
-  if (state.kalshi.t0 === t0 && state.kalshi.v != null) return; // same window — no refetch
+  // cache is keyed on SYMBOL + window — a stale target from another symbol
+  // would nuke the price scale (e.g. BTC's ~$81k on XRP's $1.30 chart)
+  if (state.kalshi.sym === sym && state.kalshi.t0 === t0 && state.kalshi.v != null) return;
+  state.kalshi = { sym, t0, v: null }; // clear the old symbol's target right away
+  if (state.liveBars.length) drawChart(state.liveBars, analyze(state.liveBars, state.mode));
   try {
-    const r = await fetch(`https://api.exchange.coinbase.com/products/${state.symbol}/candles?granularity=60`);
+    const r = await fetch(`https://api.exchange.coinbase.com/products/${sym}/candles?granularity=60`);
     if (!r.ok) return;
     const raw = await r.json();
     if (!Array.isArray(raw)) return;
     const bar = raw.find(([t]) => t === t0 - 60);
     if (!bar) return;
     const [, l, h, , c] = bar;
-    state.kalshi = { t0, v: (h + l + c) / 3 };
+    if (state.symbol !== sym) return; // switched away mid-fetch — don't paint a stale target
+    state.kalshi = { sym, t0, v: (h + l + c) / 3 };
     if (state.liveBars.length) drawChart(state.liveBars, analyze(state.liveBars, state.mode));
   } catch {}
 }
@@ -384,7 +393,7 @@ function drawChart(bars, sig) {
     if (sig.levels) for (const s of sig.levels.sup) zones.push({ v: s, c: '#16a34a', dash: [2, 4], label: '' });
     zones.push({ v: sig.entry, c: '#4f46e5', dash: [], label: 'ENTRY' });
   }
-  if (state.kalshi && state.kalshi.v != null)
+  if (state.kalshi && state.kalshi.sym === state.symbol && state.kalshi.v != null)
     zones.push({ v: state.kalshi.v, c: '#111111', dash: [7, 5], label: 'KALSHI TARGET' });
   // live price line (blue dashed): latest streamed trade, falls back to last close
   const liveV = state.lastPrice != null ? state.lastPrice : (bs.length ? bs[bs.length - 1].c : null);
@@ -522,7 +531,7 @@ function drawChart(bars, sig) {
   const isLive = state.wsLive && state.data.symbols[state.symbol]?.market === 'crypto';
   $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset`;
   $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>` +
-    ((state.kalshi && state.kalshi.v != null) ? `<span><b style="color:#111">- -</b> Kalshi target</span>` : ``) +
+    ((state.kalshi && state.kalshi.sym === state.symbol && state.kalshi.v != null) ? `<span><b style="color:#111">- -</b> Kalshi target</span>` : ``) +
     (liveV != null ? `<span><b style="color:#2563eb">- -</b> live price</span>` : ``);
 }
 
