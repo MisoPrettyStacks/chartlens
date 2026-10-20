@@ -4,7 +4,7 @@
 const DATA_URL = 'https://raw.githubusercontent.com/MisoPrettyStacks/chartlens/data/bars.json';
 const $ = (id) => document.getElementById(id);
 const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [],
-  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false };
+  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { t0: null, v: null } };
 const TFSEC = { '5m': 300, '15m': 900, '1h': 3600, '1d': 86400 };
 const defaultN = (tf) => tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : 180;
 
@@ -123,6 +123,28 @@ async function refreshCryptoLive() {
     renderSignal(sig); renderLevels(sig); renderRisk(sig); renderFeed();
     const last = bars[bars.length - 1];
     $('pxpill').innerHTML = `${s.name} <b>${fmtP(state.symbol, last.c)}</b>`;
+  } catch {}
+}
+
+/* Kalshi target (black dashed line): the current 15-min window's reference
+   price. Kalshi's API blocks browser origins, so — same as the arena pages —
+   it's the typical price (h+l+c)/3 of the Coinbase 1-minute bar in the minute
+   before the window opened, standing in for Kalshi's 60-second average. */
+const KALSHI_SYMS = ['BTC-USD', 'ETH-USD', 'XRP-USD', 'SOL-USD'];
+async function refreshKalshiTarget() {
+  if (!KALSHI_SYMS.includes(state.symbol)) { state.kalshi = { t0: null, v: null }; return; }
+  const t0 = Math.floor(Date.now() / 1000 / 900) * 900;
+  if (state.kalshi.t0 === t0 && state.kalshi.v != null) return; // same window — no refetch
+  try {
+    const r = await fetch(`https://api.exchange.coinbase.com/products/${state.symbol}/candles?granularity=60`);
+    if (!r.ok) return;
+    const raw = await r.json();
+    if (!Array.isArray(raw)) return;
+    const bar = raw.find(([t]) => t === t0 - 60);
+    if (!bar) return;
+    const [, l, h, , c] = bar;
+    state.kalshi = { t0, v: (h + l + c) / 3 };
+    if (state.liveBars.length) drawChart(state.liveBars, analyze(state.liveBars, state.mode));
   } catch {}
 }
 
@@ -361,6 +383,8 @@ function drawChart(bars, sig) {
     if (sig.levels) for (const s of sig.levels.sup) zones.push({ v: s, c: '#16a34a', dash: [2, 4], label: '' });
     zones.push({ v: sig.entry, c: '#4f46e5', dash: [], label: 'ENTRY' });
   }
+  if (state.kalshi && state.kalshi.v != null)
+    zones.push({ v: state.kalshi.v, c: '#111111', dash: [7, 5], label: 'KALSHI TARGET' });
   for (const z of zones) { lo = Math.min(lo, z.v); hi = Math.max(hi, z.v); }
   const rg = Math.max(hi - lo, 1e-9); lo -= rg * 0.06; hi += rg * 0.06;
   const cw = (W - pad.l - pad.r) / (N + CONE);
@@ -493,7 +517,8 @@ function drawChart(bars, sig) {
   }
   const isLive = state.wsLive && state.data.symbols[state.symbol]?.market === 'crypto';
   $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset`;
-  $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>`;
+  $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>` +
+    ((state.kalshi && state.kalshi.v != null) ? `<span><b style="color:#111">- -</b> Kalshi target</span>` : ``);
 }
 
 /* ---------------- mouse: wheel zoom, drag pan, double-click reset ---------------- */
@@ -602,6 +627,7 @@ function renderFeed() {
   }).join('');
 }
 function render() {
+  refreshKalshiTarget();
   state.bars = getBars();
   state.liveBars = state.bars.map((b) => ({ ...b }));
   state.view = { n: null, off: 0 };
@@ -801,7 +827,7 @@ document.querySelectorAll('#modes button').forEach((b) => {
 });
 window.addEventListener('resize', () => drawChart(state.liveBars, analyze(state.liveBars, state.mode)));
 (async () => {
-  try { await loadData(); connectWS(); jRender(); setInterval(pollData, 60000); setInterval(refreshCryptoLive, 60000); }
+  try { await loadData(); connectWS(); jRender(); setInterval(pollData, 60000); setInterval(refreshCryptoLive, 60000); setInterval(refreshKalshiTarget, 60000); }
   catch (e) { $('asof').textContent = 'waiting for first data publish…'; }
 })();
 // Poll for a fresh publish every 60s; rebase silently (keeps zoom) when it arrives.
