@@ -83,7 +83,7 @@ body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui
 <header class="topbar">
   <div>
     <h1>ChartLens Sketch</h1>
-    <p class="muted">The ChartLens chart, with the right half of the chart left blank as drawing space. Draw lines, drop premade triangles and stretch them. Drawings save on this device, per symbol and timeframe.</p>
+    <p class="muted">The ChartLens chart, with the right half of the chart left blank as drawing space. Draw lines, drop premade triangles and stretch them. Drawings save on this device, per symbol — they carry over when you switch timeframes.</p>
   </div>
   <div class="pills">
     <div class="livepill"><span class="dot"></span><span id="asof">connecting…</span></div>
@@ -113,7 +113,7 @@ body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui
       <button class="tbtn on" data-tool="move" title="Select and drag lines, corners, and triangles">✋ Select</button>
       <span class="sep"></span>
       <span class="lbl">Auto:</span>
-      <button class="tbtn on" id="autoTriBtn" title="Auto-detected triangle pattern">△ Auto</button>
+      <button class="tbtn on" id="autoTriBtn" title="Auto triangle — a forming one shows on every timeframe even while it's still developing">△ Auto</button>
       <button class="tbtn on" id="markersBtn" title="BUY/SELL signal markers">Markers</button>
       <button class="tbtn on" id="coneBtn" title="ATR volatility cone into the drawing space">ATR cone</button>
       <span class="sep"></span>
@@ -416,7 +416,75 @@ function findTriangle(bars){ const n=bars.length;
     if(!type) continue;
     return {type,startI,endI,apexI:Math.round(apex),hiAt:hf.at,loAt:lf.at}; }
   return null; }
-
+/* best-forming triangle — guarantees a triangle on every timeframe, even while one is
+   still developing. Same swing math as findTriangle, but instead of the strict checklist
+   it keeps the most-converging upper/lower pair and marks it forming. */
+function findFormingTriangle(bars){ const n=bars.length;
+  if(n<30) return null;
+  const k=2, from=Math.max(0,n-100), highs=[], lows=[];
+  for(let i=from+k;i<n-k;i++){ let isH=true, isL=true;
+    for(let j=1;j<=k;j++){ if(bars[i].h<bars[i-j].h||bars[i].h<bars[i+j].h) isH=false;
+      if(bars[i].l>bars[i-j].l||bars[i].l>bars[i+j].l) isL=false; }
+    if(isH) highs.push({i,v:bars[i].h}); if(isL) lows.push({i,v:bars[i].l}); }
+  const dedupe=(pts,isHigh)=>{ const out=[];
+    for(const p of pts){ const lastP=out[out.length-1];
+      if(lastP&&p.i-lastP.i<=2*k){ if(isHigh?p.v>lastP.v:p.v<lastP.v) out[out.length-1]=p; }
+      else out.push(p); } return out; };
+  const swingHighs=dedupe(highs,true), swingLows=dedupe(lows,false);
+  const fit=(pts)=>{ const cnt=pts.length;
+    const sx=pts.reduce((a,p)=>a+p.i,0), sy=pts.reduce((a,p)=>a+p.v,0);
+    const sxx=pts.reduce((a,p)=>a+p.i*p.i,0), sxy=pts.reduce((a,p)=>a+p.i*p.v,0);
+    const den=cnt*sxx-sx*sx, slope=den===0?0:(cnt*sxy-sx*sy)/den, icept=(sy-slope*sx)/cnt;
+    return {m:slope,b:icept,at:(x)=>slope*x+icept}; };
+  const apexOf=(hf,lf,endI)=>{ const raw=(lf.b-hf.b)/(hf.m-lf.m);
+    return Math.round(raw>endI?Math.min(raw,endI+220):endI+40); };
+  const classify=(hf,lf,span,gapStart)=>{ const FLATV=0.3*gapStart;
+    const sideOf=(f)=>Math.abs(f.m)*span<=FLATV?'flat':f.m<0?'falling':'rising';
+    const upSide=sideOf(hf), dnSide=sideOf(lf);
+    if(upSide==='falling'&&dnSide==='rising') return 'symmetrical triangle';
+    if(upSide==='flat'&&dnSide==='rising') return 'ascending triangle';
+    if(upSide==='falling'&&dnSide==='flat') return 'descending triangle';
+    if(upSide==='falling'&&dnSide==='falling') return 'falling wedge';
+    if(upSide==='rising'&&dnSide==='rising') return 'rising wedge';
+    if(upSide==='falling'||dnSide==='rising') return 'converging range';
+    return 'triangle'; };
+  let best=null;
+  if(swingHighs.length>=2&&swingLows.length>=2){
+    for(const take of [3,2]){
+      const hp=swingHighs.slice(-take), lp=swingLows.slice(-take);
+      if(hp.length<2||lp.length<2) continue;
+      const hf=fit(hp), lf=fit(lp);
+      const startI=Math.min(hp[0].i,lp[0].i), endI=n-1;
+      if(endI-startI<8) continue;
+      const gapStart=hf.at(startI)-lf.at(startI), gapEnd=hf.at(endI)-lf.at(endI);
+      if(!(gapStart>0)||!(gapEnd>0)||hf.m===lf.m) continue;
+      const score=gapEnd/gapStart-(endI-startI)/400; /* prefer converging + longer */
+      if(!best||score<best.score)
+        best={score,type:classify(hf,lf,endI-startI,gapStart),startI,endI,apexI:apexOf(hf,lf,endI),hiAt:hf.at,loAt:lf.at};
+    }
+    if(!best){ /* the last two swings always draw */
+      const hp=swingHighs.slice(-2), lp=swingLows.slice(-2);
+      const hf=fit(hp), lf=fit(lp);
+      const startI=Math.min(hp[0].i,lp[0].i), endI=n-1;
+      const gapStart=hf.at(startI)-lf.at(startI);
+      if(gapStart>0&&hf.m!==lf.m)
+        best={score:99,type:classify(hf,lf,endI-startI,gapStart),startI,endI,apexI:apexOf(hf,lf,endI),hiAt:hf.at,loAt:lf.at};
+    }
+  }
+  if(!best){ /* no clean swings at all — fit the raw highs/lows of the tail directly */
+    const tail=bars.slice(Math.max(0,n-40));
+    if(tail.length>=12){
+      const base=n-tail.length;
+      const hf=fit(tail.map((b,j)=>({i:base+j,v:b.h}))), lf=fit(tail.map((b,j)=>({i:base+j,v:b.l})));
+      const startI=base, endI=n-1, gapStart=hf.at(startI)-lf.at(startI);
+      if(gapStart>0&&hf.m!==lf.m)
+        best={score:999,type:classify(hf,lf,endI-startI,gapStart),startI,endI,apexI:apexOf(hf,lf,endI),hiAt:hf.at,loAt:lf.at};
+    }
+  }
+  if(!best) return null;
+  best.type=best.type.charAt(0).toUpperCase()+best.type.slice(1);
+  best.forming=true; delete best.score;
+  return best; }
 /* ---------------- chart: candles on the left half, blank draw space on the right half ---------------- */
 function drawChart(){
   const cv=$('chart'), ctx=cv.getContext('2d');
@@ -453,7 +521,7 @@ function drawChart(){
     zones.push({v:sig.entry,c:'#4f46e5',dash:[],label:'ENTRY'});
   }
   if(cone){ const w=cone.atr*Math.sqrt(cone.n); lo=Math.min(lo,cone.px-w); hi=Math.max(hi,cone.px+w); }
-  const tri=S.auto.tri?findTriangle(bs):null;
+  const tri=S.auto.tri?(findTriangle(bs)||findFormingTriangle(bs)):null;
   for(const z of zones){ lo=Math.min(lo,z.v); hi=Math.max(hi,z.v); }
   const rg=Math.max(hi-lo,1e-9); lo-=rg*0.12; hi+=rg*0.12;
   const plotW=W-pad.l-pad.r, cw=plotW/(N+F);
@@ -531,7 +599,8 @@ function drawChart(){
       if(!s){ ctx.moveTo(X(i),Y(arr[i])); s=true; } else ctx.lineTo(X(i),Y(arr[i])); }
     ctx.stroke(); };
   emaLine(e12,'#f59e0b'); emaLine(e26,'#4f46e5');
-  /* auto-detected triangle — shaded shape plus trendlines extended toward the apex */
+  /* auto triangle — strict detection when one fits, otherwise the best-forming one,
+     so every timeframe always shows a triangle; forming ones draw dashed */
   if(tri){
     const capFull=Math.min(tri.apexI,N+F-1);
     if(tri.endI>=0&&tri.startI<N+F){
@@ -540,12 +609,16 @@ function drawChart(){
       ctx.lineTo(X(tri.endI),Y(tri.hiAt(tri.endI)));
       ctx.lineTo(X(tri.endI),Y(tri.loAt(tri.endI)));
       ctx.lineTo(X(tri.startI),Y(tri.loAt(tri.startI)));
-      ctx.closePath(); ctx.fillStyle='rgba(124,58,237,.07)'; ctx.fill();
-      ctx.strokeStyle='#7c3aed'; ctx.lineWidth=1.6; ctx.setLineDash([]);
+      ctx.closePath();
+      ctx.fillStyle=tri.forming?'rgba(124,58,237,.045)':'rgba(124,58,237,.07)'; ctx.fill();
+      ctx.strokeStyle='#7c3aed'; ctx.lineWidth=tri.forming?1.2:1.6;
+      ctx.setLineDash(tri.forming?[7,5]:[]);
       ctx.beginPath(); ctx.moveTo(X(tri.startI),Y(tri.hiAt(tri.startI))); ctx.lineTo(X(capFull),Y(tri.hiAt(capFull))); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(X(tri.startI),Y(tri.loAt(tri.startI))); ctx.lineTo(X(capFull),Y(tri.loAt(capFull))); ctx.stroke();
-      ctx.fillStyle='#7c3aed'; ctx.font='600 11px system-ui';
-      ctx.fillText(tri.type, X(tri.startI)+4, Math.max(pad.t+10, Y(tri.hiAt(tri.startI))-6));
+      ctx.setLineDash([]);
+      ctx.fillStyle='#7c3aed'; ctx.font=tri.forming?'italic 600 10px system-ui':'600 11px system-ui';
+      ctx.fillText(tri.forming?('Forming '+tri.type):tri.type, X(tri.startI)+4, Math.max(pad.t+10, Y(tri.hiAt(tri.startI))-6));
+      ctx.font='10px system-ui';
     }
   }
   /* zones (kalshi target, live) */
