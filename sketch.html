@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ChartLens Sketch — draw on the chart</title>
+<style>
+:root { --bg:#f4f6fb; --card:#ffffff; --ink:#1b2333; --muted:#6b768c; --line:#e4e9f2; --up:#16a34a; --down:#dc2626; --accent:#4f46e5; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+.warnbanner { background:#fef3c7; border-bottom:2px solid #f59e0b; color:#78350f; padding:9px 26px; font-size:13px; }
+.warnbanner b { font-weight:800; }
+.topbar { display:flex; justify-content:space-between; align-items:flex-start; gap:16px; padding:22px 26px 6px; flex-wrap:wrap; }
+.topbar h1 { margin:0 0 4px; font-size:26px; letter-spacing:-0.02em; }
+.muted { color:var(--muted); }
+.topbar p { margin:0; max-width:680px; font-size:13.5px; }
+.pills { display:flex; gap:8px; flex-wrap:wrap; }
+.livepill { display:inline-flex; align-items:center; gap:8px; background:var(--card); border:1px solid var(--line); border-radius:999px; padding:8px 14px; font-size:13px; white-space:nowrap; }
+.livepill .dot { width:9px; height:9px; border-radius:50%; background:var(--up); box-shadow:0 0 0 4px rgba(22,163,74,.15); }
+.markets { display:flex; gap:8px; padding:10px 26px 0; }
+.layout { padding:14px 26px; }
+.chartpanel { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px 16px; }
+.controls { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+.syms, .tfs { display:flex; gap:6px; flex-wrap:wrap; }
+.markets button, .syms button, .tfs button { border:1px solid var(--line); background:var(--card); border-radius:10px; padding:7px 14px; font-size:13.5px; cursor:pointer; color:var(--ink); }
+.markets button.on, .syms button.on, .tfs button.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+.searchwrap { position:relative; }
+#search { border:1px solid var(--line); border-radius:10px; padding:7px 12px; font-size:13.5px; width:220px; }
+#searchres { position:absolute; top:100%; left:0; right:0; background:var(--card); border:1px solid var(--line); border-radius:10px; margin-top:4px; max-height:260px; overflow:auto; display:none; z-index:20; box-shadow:0 8px 24px rgba(0,0,0,.08); }
+#searchres div { padding:8px 12px; font-size:13px; cursor:pointer; display:flex; justify-content:space-between; gap:8px; }
+#searchres div:hover { background:#eef1f6; }
+#searchres .sym { font-weight:700; }
+#searchres .nm { color:var(--muted); font-size:12px; }
+.toolbar { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:10px; padding:8px 10px; background:#fafbfe; border:1px solid var(--line); border-radius:10px; }
+.toolbar .lbl { font-size:12px; color:var(--muted); font-weight:700; margin-right:2px; }
+.tbtn { border:1px solid var(--line); background:#fff; border-radius:8px; padding:6px 12px; font-size:13px; cursor:pointer; color:var(--ink); }
+.tbtn.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+.tbtn:disabled { opacity:.4; cursor:default; }
+.dotbtn { width:22px; height:22px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px var(--line); cursor:pointer; padding:0; }
+.dotbtn.on { box-shadow:0 0 0 2px var(--ink); }
+.toolbar .sep { width:1px; height:22px; background:var(--line); margin:0 2px; }
+.chartwrap { position:relative; }
+#chart { width:100%; height:480px; display:block; background:#fafbfe; border:1px solid var(--line); border-radius:10px; cursor:crosshair; touch-action:none; }
+.spanpill { position:absolute; top:8px; left:8px; padding:4px 10px; border-radius:8px; background:#eef1f6; border:1px solid #dfe5f2; color:#33415c; font-size:11px; font-weight:600; pointer-events:none; }
+#candleTip { position:absolute; z-index:5; display:none; max-width:320px; background:#fff; border:1px solid #dfe5f2; border-radius:12px; box-shadow:0 10px 28px rgba(20,28,50,.16); padding:10px 12px; font-size:12.5px; line-height:1.5; color:#1b2333; pointer-events:none; }
+.ct-ohlc { font-size:11.5px; color:#6b768c; font-variant-numeric:tabular-nums; }
+.legend { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-top:8px; }
+.legend b { font-weight:700; }
+</style>
+</head>
+<body>
+<!-- AGREEWALL: mandatory disclaimer. Agree to enter; exit leaves the site. -->
+<div id="agreewall" style="position:fixed;inset:0;z-index:999999;background:rgba(8,10,18,.94);display:flex;align-items:center;justify-content:center;padding:16px;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;">
+  <div style="width:100%;max-width:560px;background:#fff;border:3px solid #f59e0b;border-radius:14px;overflow:hidden;box-shadow:0 0 60px rgba(245,158,11,.25);">
+    <div style="background:#fef3c7;border-bottom:2px solid #f59e0b;padding:14px 20px;">
+      <div style="font-size:26px;">⚠️</div>
+      <div style="font-weight:800;font-size:17px;color:#1b2333;">DISCLAIMER — YOU MUST AGREE TO ENTER</div>
+      <div style="font-size:12px;color:#78350f;">ChartLens Sketch</div>
+    </div>
+    <div style="padding:18px 20px;font-size:13.5px;color:#1b2333;line-height:1.55;max-height:46vh;overflow:auto;">
+      <p style="margin:0 0 10px;"><b>1. Research only.</b> Everything on this site — charts, drawings, levels — is published for research purposes only. It is <b>not financial, investment, trading, tax, or legal advice</b>.</p>
+      <p style="margin:0 0 10px;"><b>2. No guarantees.</b> Nothing drawn here predicts the future. Past output does not predict future results.</p>
+      <p style="margin:0;"><b>3. Your risk, your responsibility.</b> You alone are responsible for any decision you make.</p>
+    </div>
+    <div style="padding:14px 20px;border-top:1px solid #e4e9f2;display:flex;gap:10px;justify-content:flex-end;background:#fafbfe;">
+      <button id="aw-exit" style="border:1px solid #dc2626;background:#fff;color:#dc2626;border-radius:10px;padding:10px 22px;font-size:14px;font-weight:700;cursor:pointer;">EXIT</button>
+      <button id="aw-agree" style="border:none;background:#16a34a;color:#fff;border-radius:10px;padding:10px 26px;font-size:14px;font-weight:800;cursor:pointer;">I AGREE — ENTER</button>
+    </div>
+  </div>
+</div>
+<script>
+(function(){
+  var KEY='agreewall-'+location.hostname+location.pathname+'-v1';
+  var wall=document.getElementById('agreewall'); var done=false;
+  try{ done=localStorage.getItem(KEY)==='1'; }catch(e){}
+  if(done){ wall.remove(); return; }
+  document.getElementById('aw-agree').onclick=function(){ try{ localStorage.setItem(KEY,'1'); }catch(e){} wall.remove(); };
+  document.getElementById('aw-exit').onclick=function(){ window.location.href='https://www.google.com'; };
+})();
+</script>
+
+<div class="warnbanner">⚠️ <b>NOT FINANCIAL ADVICE.</b> ChartLens Sketch is a research tool. Your drawings describe ideas — they do not predict the future and are not recommendations to buy or sell.</div>
+<header class="topbar">
+  <div>
+    <h1>ChartLens Sketch</h1>
+    <p class="muted">The ChartLens chart, with the right half of the chart left blank as drawing space. Draw lines, drop premade triangles and stretch them. Drawings save on this device, per symbol and timeframe.</p>
+  </div>
+  <div class="pills">
+    <div class="livepill"><span class="dot"></span><span id="asof">connecting…</span></div>
+    <div class="livepill" id="pxpill">—</div>
+  </div>
+</header>
+
+<nav class="markets" id="markets" aria-label="markets"></nav>
+
+<main class="layout">
+  <section class="chartpanel">
+    <div class="controls">
+      <div class="syms" id="syms"></div>
+      <div class="tfs" id="tfs"></div>
+      <div class="searchwrap">
+        <input id="search" placeholder="Look up a symbol…" autocomplete="off" spellcheck="false">
+        <div id="searchres"></div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <span class="lbl">Draw:</span>
+      <button class="tbtn" data-tool="line" title="Drag on the chart to draw a line">✏️ Line</button>
+      <button class="tbtn" data-tool="tri-sym" title="Click the chart to drop a symmetrical triangle, then drag its corners">△ Sym</button>
+      <button class="tbtn" data-tool="tri-asc" title="Click the chart to drop an ascending triangle, then drag its corners">△ Asc</button>
+      <button class="tbtn" data-tool="tri-desc" title="Click the chart to drop a descending triangle, then drag its corners">△ Desc</button>
+      <button class="tbtn on" data-tool="move" title="Select and drag lines, corners, and triangles">✋ Select</button>
+      <span class="sep"></span>
+      <span class="lbl">Color:</span>
+      <button class="dotbtn on" data-color="#2563eb" style="background:#2563eb" title="blue"></button>
+      <button class="dotbtn" data-color="#111111" style="background:#111111" title="black"></button>
+      <button class="dotbtn" data-color="#dc2626" style="background:#dc2626" title="red"></button>
+      <button class="dotbtn" data-color="#16a34a" style="background:#16a34a" title="green"></button>
+      <button class="dotbtn" data-color="#d97706" style="background:#d97706" title="amber"></button>
+      <span class="sep"></span>
+      <button class="tbtn" id="undoBtn" title="Undo last change (Ctrl+Z)">↶ Undo</button>
+      <button class="tbtn" id="delBtn" title="Delete the selected shape (Del)">🗑 Delete</button>
+      <button class="tbtn" id="clearBtn" title="Remove all drawings on this symbol + timeframe">✕ Clear all</button>
+    </div>
+    <div class="chartwrap"><canvas id="chart"></canvas><span class="spanpill" id="spanpill"></span><div id="candleTip" aria-hidden="true"></div></div>
+    <div class="legend" id="legend"></div>
+  </section>
+</main>
+<script>
+"use strict";
+
+/* ============ ChartLens Sketch — same chart as ChartLens, right half is blank drawing space ============ */
+const DATA_URL = 'https://raw.githubusercontent.com/MisoPrettyStacks/chartlens/data/bars.json';
+const $ = (id) => document.getElementById(id);
+const S = { data:null, market:'crypto', symbol:'BTC-USD', tf:'15m', bars:[],
+  kalshi:{sym:null,t0:null,v:null}, lastPrice:null, wsLive:false,
+  shapes:[], tool:'move', color:'#2563eb', selected:null, drag:null, undoStack:[],
+  geom:null, _hoverI:null, _raf:false, _ws:null };
+const TFSEC = { '1m':60, '5m':300, '15m':900, '1h':3600, '6h':21600, '12h':43200, '1d':86400 };
+const defaultN = (tf) => tf==='1m'?120 : tf==='5m'?120 : tf==='15m'?96 : tf==='1h'?120 : tf==='6h'?120 : tf==='12h'?120 : 180;
+const DECIMALS = { 'BTC-USD':2, 'ETH-USD':2, 'XRP-USD':4, 'SOL-USD':2, 'EURUSD=X':5, 'GBPUSD=X':5, 'USDJPY=X':3, 'CL=F':2 };
+const dec = (s) => DECIMALS[s] ?? 2;
+const fmtP = (s,v) => v==null||!isFinite(v) ? '—' : v.toFixed(dec(s));
+const timeLblOf = (t, tf) => {
+  const d = new Date(t*1000);
+  return tf==='1d'
+    ? d.toLocaleDateString('en-US',{month:'numeric',day:'numeric',timeZone:'America/Los_Angeles'})
+    : d.toLocaleString('en-US',{month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit',hourCycle:'h23',timeZone:'America/Los_Angeles'});
+};
+
+/* ---------------- data ---------------- */
+async function loadData(){
+  const r = await fetch(DATA_URL+'?t='+Date.now());
+  if(!r.ok) throw new Error('data unavailable');
+  S.data = await r.json();
+  const g = S.data.generated ? new Date(S.data.generated) : null;
+  $('asof').textContent = g ? 'data · '+g.toLocaleString('en-US',{month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/Los_Angeles'})+' PT' : 'waiting for publisher';
+  buildMarkets(); buildSyms(); buildTfs(); selectSymbol(S.symbol);
+}
+function symbolsOf(m){ return Object.entries(S.data.symbols).filter(([,s])=>s.market===m); }
+function buildMarkets(){
+  const mk=$('markets'); mk.innerHTML='';
+  for(const m of ['crypto','stocks','forex','commodities']){
+    const b=document.createElement('button'); b.textContent=m[0].toUpperCase()+m.slice(1);
+    b.className = S.market===m?'on':'';
+    b.onclick=()=>{ S.market=m; buildMarkets(); buildSyms(); };
+    mk.appendChild(b);
+  }
+}
+function buildSyms(){
+  const el=$('syms'); el.innerHTML='';
+  const syms=symbolsOf(S.market);
+  for(const [id,s] of syms.slice(0,8)){
+    const b=document.createElement('button'); b.textContent=s.name;
+    b.className = S.symbol===id?'on':'';
+    b.onclick=()=>selectSymbol(id);
+    el.appendChild(b);
+  }
+}
+function buildTfs(){
+  const el=$('tfs'); el.innerHTML='';
+  const avail = S.data.symbols[S.symbol]?.tfs || {};
+  for(const tf of ['1m','5m','15m','1h','6h','12h','1d']){
+    const b=document.createElement('button'); b.textContent=tf;
+    b.className = S.tf===tf?'on':'';
+    if(S.market!=='crypto' && !avail[tf]){ b.disabled=true; b.title='not published for this symbol'; }
+    b.onclick=()=>{ S.tf=tf; saveShapes(); buildTfs(); selectSymbol(S.symbol); };
+    el.appendChild(b);
+  }
+}
+function selectSymbol(id){
+  S.symbol=id; S.market=S.data.symbols[id].market;
+  S.kalshi={sym:null,t0:null,v:null}; S.lastPrice=null; S.selected=null; S.drag=null;
+  loadShapes(); buildMarkets(); buildSyms(); buildTfs();
+  const s=S.data.symbols[id];
+  let bars=(s.tfs&&s.tfs[S.tf]) ? s.tfs[S.tf].map(([t,o,h,l,c,v])=>({t,o,h,l,c,v})) : [];
+  S.bars=bars;
+  drawChart(); refreshCryptoLive(); refreshKalshiTarget(); connectWS();
+  $('pxpill').innerHTML = s.name+' <b>'+(bars.length?fmtP(id,bars[bars.length-1].c):'—')+'</b>';
+}
+/* live crypto candles (Coinbase REST, direct) */
+async function fetchCoinbaseBars(id,tf){
+  const gran = tf==='12h' ? 21600 : TFSEC[tf];
+  if(!gran) return null;
+  const r = await fetch(`https://api.exchange.coinbase.com/products/${id}/candles?granularity=${gran}`);
+  if(!r.ok) return null;
+  const raw = await r.json();
+  if(!Array.isArray(raw)||!raw.length) return null;
+  const bars = raw.map(([t,l,h,o,c,v])=>({t,o,h,l,c,v})).sort((a,b)=>a.t-b.t);
+  if(tf!=='12h') return bars;
+  const out=[];
+  for(const b of bars){
+    const bucket=Math.floor(b.t/43200)*43200, last=out[out.length-1];
+    if(last&&last.t===bucket){ last.h=Math.max(last.h,b.h); last.l=Math.min(last.l,b.l); last.c=b.c; last.v+=b.v; }
+    else out.push({t:bucket,o:b.o,h:b.h,l:b.l,c:b.c,v:b.v});
+  }
+  return out;
+}
+async function refreshCryptoLive(){
+  const sym=S.symbol, tf=S.tf, s=S.data?.symbols[sym];
+  if(!s||s.market!=='crypto') return;
+  try{
+    const bars=await fetchCoinbaseBars(sym,tf);
+    if(S.symbol!==sym||S.tf!==tf) return;
+    if(!bars||bars.length<10) return;
+    S.bars=bars;
+    $('asof').textContent='live · '+new Date().toLocaleString('en-US',{month:'numeric',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/Los_Angeles'})+' PT';
+    const last=bars[bars.length-1]; S.lastPrice=last.c;
+    $('pxpill').innerHTML=s.name+' <b>'+fmtP(sym,last.c)+'</b>';
+    drawChart();
+  }catch{}
+}
+/* Kalshi target: typical price (h+l+c)/3 of the Coinbase 1-min bar in the minute before the window opened */
+const KALSHI_SYMS=['BTC-USD','ETH-USD','XRP-USD','SOL-USD'];
+async function refreshKalshiTarget(){
+  const sym=S.symbol;
+  if(!KALSHI_SYMS.includes(sym)){ S.kalshi={sym:null,t0:null,v:null}; return; }
+  const t0=Math.floor(Date.now()/1000/900)*900;
+  if(S.kalshi.sym===sym&&S.kalshi.t0===t0&&S.kalshi.v!=null) return;
+  S.kalshi={sym,t0,v:null}; drawChart();
+  try{
+    const r=await fetch(`https://api.exchange.coinbase.com/products/${sym}/candles?granularity=60`);
+    if(!r.ok) return;
+    const raw=await r.json(); if(!Array.isArray(raw)) return;
+    const bar=raw.find(([t])=>t===t0-60); if(!bar) return;
+    const [,l,h,,c]=bar;
+    if(S.symbol!==sym) return;
+    S.kalshi={sym,t0,v:(h+l+c)/3};
+    drawChart();
+  }catch{}
+}
+/* live tick WS for the LIVE price line */
+function connectWS(){
+  try{ if(S._ws) S._ws.close(); }catch{}
+  S.wsLive=false; S._ws=null;
+  if(S.market!=='crypto') return;
+  const sym=S.symbol;
+  let delay=2000;
+  const go=()=>{
+    if(S.symbol!==sym) return;
+    let ws; try{ ws=new WebSocket('wss://ws-feed.exchange.coinbase.com'); }catch{ setTimeout(go,delay); delay=Math.min(delay*2,30000); return; }
+    S._ws=ws;
+    ws.onopen=()=>{ delay=2000; S.wsLive=true; ws.send(JSON.stringify({type:'subscribe',channels:['ticker'],product_ids:[sym]})); };
+    ws.onmessage=(ev)=>{ try{ const m=JSON.parse(ev.data); if(m.type==='ticker'&&m.product_id===sym&&m.price){ S.lastPrice=parseFloat(m.price); queueDraw(); } }catch{} };
+    const retry=()=>{ if(S.symbol!==sym) return; S.wsLive=false; setTimeout(go,delay); delay=Math.min(delay*2,30000); };
+    ws.onclose=retry; ws.onerror=retry;
+  };
+  go();
+}
+function queueDraw(){ if(S._raf) return; S._raf=true; requestAnimationFrame(()=>{ S._raf=false; drawChart(); }); }
+/* indicators */
+const closes=(bars)=>bars.map(b=>b.c);
+function ema(vals,p){ const k=2/(p+1), out=new Array(vals.length).fill(null); let e=null;
+  for(let i=0;i<vals.length;i++){ e = e==null?vals[i]:vals[i]*k+e*(1-k); if(i>=p-1) out[i]=e; } return out; }
+function bollinger(vals,p=20,m=2){ const out=new Array(vals.length).fill(null);
+  for(let i=p-1;i<vals.length;i++){ const w=vals.slice(i-p+1,i+1), mean=w.reduce((a,b)=>a+b,0)/p;
+    const sd=Math.sqrt(w.reduce((a,b)=>a+(b-mean)*(b-mean),0)/p);
+    out[i]={up:mean+m*sd, lo:mean-m*sd}; } return out; }
+
+/* ---------------- chart: candles on the left half, blank draw space on the right half ---------------- */
+function drawChart(){
+  const cv=$('chart'), ctx=cv.getContext('2d');
+  const dpr=window.devicePixelRatio||1, W=cv.clientWidth, H=cv.clientHeight;
+  cv.width=W*dpr; cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,W,H);
+  const bars=S.bars;
+  if(!bars.length){ ctx.fillStyle='#6b768c'; ctx.font='13px system-ui'; ctx.fillText('No data for this symbol/timeframe yet.',20,40); return; }
+  const tfSec=TFSEC[S.tf]||900;
+  const maxN=bars.length;
+  const N=Math.max(30,Math.min(defaultN(S.tf),maxN)); // candles
+  const F=N;                                          // blank draw slots — exactly half the space
+  const bs=bars.slice(maxN-N);
+  const pad={l:8,r:64,t:10,b:44};
+  let lo=Infinity, hi=-Infinity;
+  for(const b of bs){ lo=Math.min(lo,b.l); hi=Math.max(hi,b.h); }
+  const cl=closes(bs), e12=ema(cl,12), e26=ema(cl,26), bb=bollinger(cl);
+  for(let i=0;i<bs.length;i++) for(const v of [e12[i],e26[i],bb[i]?.up,bb[i]?.lo])
+    if(v!=null){ lo=Math.min(lo,v); hi=Math.max(hi,v); }
+  const zones=[];
+  if(S.kalshi.sym===S.symbol&&S.kalshi.v!=null) zones.push({v:S.kalshi.v,c:'#111111',dash:[7,5],label:'KALSHI TARGET'});
+  const liveV=S.lastPrice!=null?S.lastPrice:(bs.length?bs[bs.length-1].c:null);
+  if(liveV!=null&&S.market==='crypto') zones.push({v:liveV,c:'#2563eb',dash:[4,3],label:'LIVE'});
+  for(const z of zones){ lo=Math.min(lo,z.v); hi=Math.max(hi,z.v); }
+  const rg=Math.max(hi-lo,1e-9); lo-=rg*0.12; hi+=rg*0.12;
+  const plotW=W-pad.l-pad.r, cw=plotW/(N+F);
+  const t0=bs[0].t;
+  const X=(i)=>pad.l+(i+0.5)*cw;
+  const Y=(v)=>pad.t+(1-(v-lo)/(hi-lo))*(H-pad.t-pad.b);
+  const slotOf=(t)=>(t-t0)/tfSec;
+  const timeOf=(s)=>t0+s*tfSec;
+  S.geom={pad,lo,hi,cw,N,F,tfSec,t0,W,H,X,Y,slotOf,timeOf,bs};
+  const d=S.symbol;
+  /* price gridlines — full width so drawings line up with prices */
+  ctx.font='10px system-ui'; ctx.fillStyle='#8a94a8'; ctx.strokeStyle='#e8ecf4'; ctx.lineWidth=1;
+  for(let g=0;g<=5;g++){
+    const v=lo+(hi-lo)*g/5, y=Y(v);
+    ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
+    ctx.fillText(v.toFixed(dec(d)),W-pad.r+4,y+3);
+  }
+  /* time gridlines — extended into the blank draw space */
+  const widestLbl=Math.max(...bs.map((b)=>ctx.measureText(timeLblOf(b.t,S.tf)).width),60);
+  const tStep=Math.max(1,Math.ceil((widestLbl+16)/cw));
+  const gridIdx=[]; for(let i=0;i<N+F;i+=tStep) gridIdx.push(i);
+  for(const i of gridIdx){
+    const x=X(i);
+    ctx.beginPath(); ctx.moveTo(x,pad.t); ctx.lineTo(x,H-pad.b); ctx.stroke();
+    const fut=i>=N;
+    ctx.fillStyle= fut ? '#c3cad8' : '#8a94a8';
+    const lbl=timeLblOf(timeOf(i),S.tf);
+    ctx.fillText(lbl, x-ctx.measureText(lbl).width/2, H-pad.b+14);
+    ctx.fillStyle='#8a94a8';
+  }
+  /* NOW divider between data and draw space */
+  const xNow=X(N-1)+cw/2;
+  ctx.strokeStyle='#9aa3b5'; ctx.lineWidth=1.2; ctx.setLineDash([5,4]);
+  ctx.beginPath(); ctx.moveTo(xNow,pad.t); ctx.lineTo(xNow,H-pad.b); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillStyle='#6b768c'; ctx.font='700 10px system-ui';
+  ctx.fillText('NOW', xNow+5, pad.t+10);
+  ctx.font='600 13px system-ui'; ctx.fillStyle='#d4d9e4';
+  ctx.fillText('DRAWING SPACE →', xNow+14, pad.t+26);
+  ctx.font='10px system-ui';
+  /* bollinger */
+  ctx.beginPath(); let started=false;
+  for(let i=0;i<bs.length;i++){ if(!bb[i]) continue;
+    if(!started){ ctx.moveTo(X(i),Y(bb[i].up)); started=true; } else ctx.lineTo(X(i),Y(bb[i].up)); }
+  for(let i=bs.length-1;i>=0;i--){ if(bb[i]) ctx.lineTo(X(i),Y(bb[i].lo)); }
+  ctx.closePath(); ctx.fillStyle='rgba(79,70,229,.06)'; ctx.fill();
+  /* candles */
+  const bw=Math.max(1.5,cw*0.62);
+  for(let i=0;i<bs.length;i++){
+    const b=bs[i], x=X(i), col=b.c>=b.o?'#16a34a':'#dc2626';
+    ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(x,Y(b.h)); ctx.lineTo(x,Y(b.l)); ctx.stroke();
+    const yo=Y(b.o), yc=Y(b.c);
+    ctx.fillRect(x-bw/2,Math.min(yo,yc),bw,Math.max(1,Math.abs(yo-yc)));
+  }
+  /* EMAs */
+  const emaLine=(arr,col)=>{ ctx.strokeStyle=col; ctx.lineWidth=1.4; ctx.beginPath(); let s=false;
+    for(let i=0;i<bs.length;i++){ if(arr[i]==null) continue;
+      if(!s){ ctx.moveTo(X(i),Y(arr[i])); s=true; } else ctx.lineTo(X(i),Y(arr[i])); }
+    ctx.stroke(); };
+  emaLine(e12,'#f59e0b'); emaLine(e26,'#4f46e5');
+  /* zones (kalshi target, live) */
+  for(const z of zones){
+    ctx.strokeStyle=z.c; ctx.lineWidth=1.4; ctx.setLineDash(z.dash);
+    ctx.beginPath(); ctx.moveTo(pad.l,Y(z.v)); ctx.lineTo(W-pad.r,Y(z.v)); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle=z.c; ctx.font='600 10px system-ui';
+    ctx.fillText(z.label, W-pad.r-ctx.measureText(z.label).width-4, Y(z.v)-5);
+    ctx.font='10px system-ui';
+  }
+  drawShapes(ctx);
+  drawHandles(ctx);
+  /* pills + legend */
+  const s=S.data.symbols[S.symbol];
+  $('spanpill').textContent = bs.length+' candles · '+(S.market==='crypto'?'live':'delayed ~15 min');
+  $('legend').innerHTML =
+    `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span>`+
+    (S.kalshi.v!=null?`<span><b style="color:#111">- -</b> Kalshi target</span>`:'')+
+    (S.market==='crypto'?`<span><b style="color:#2563eb">- -</b> LIVE</span>`:'')+
+    `<span class="muted">Line: drag to draw · Triangle: click to drop, drag corners to stretch · Select: move shapes · Del deletes · Ctrl+Z undo</span>`;
+}
+
+/* ---------------- drawings ---------------- */
+function shapeKey(){ return 'chartlens-sketch.'+S.symbol+'.'+S.tf; }
+function loadShapes(){
+  try{ const all=JSON.parse(localStorage.getItem('chartlens-sketch')||'{}'); S.shapes=all[shapeKey()]||[]; }
+  catch{ S.shapes=[]; }
+  S.selected=null; S.undoStack=[];
+}
+let saveT=null;
+function saveShapes(){
+  clearTimeout(saveT);
+  saveT=setTimeout(()=>{ try{
+    const all=JSON.parse(localStorage.getItem('chartlens-sketch')||'{}');
+    all[shapeKey()]=S.shapes; localStorage.setItem('chartlens-sketch',JSON.stringify(all));
+  }catch{} },400);
+}
+function pushUndo(){ S.undoStack.push(JSON.stringify(S.shapes)); if(S.undoStack.length>40) S.undoStack.shift(); }
+function doUndo(){
+  const prev=S.undoStack.pop();
+  if(prev==null) return;
+  S.shapes=JSON.parse(prev); S.selected=null; saveShapes(); drawChart();
+}
+/* geometry helpers on shapes (points stored as {t, v}) */
+function triEdges(kind){
+  // edge list as index pairs into pts
+  return kind==='sym' ? [[0,1],[0,2],[1,2]] : [[0,1],[0,2],[1,2]];
+}
+function drawShapes(ctx){
+  const g=S.geom; if(!g) return;
+  const X=g.X, Y=g.Y, sOf=g.slotOf;
+  for(let si=0; si<S.shapes.length; si++){
+    const sh=S.shapes[si], sel = S.selected===si;
+    ctx.strokeStyle=sh.color; ctx.fillStyle=sh.color; ctx.lineWidth=sel?2.6:1.8;
+    if(sh.type==='line'){
+      const x1=X(sOf(sh.p1.t)), y1=Y(sh.p1.v), x2=X(sOf(sh.p2.t)), y2=Y(sh.p2.v);
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+      if(sel){ dot(ctx,x1,y1,sh.color); dot(ctx,x2,y2,sh.color); }
+    }else if(sh.type==='tri'){
+      const P=sh.pts.map(p=>({x:X(sOf(p.t)), y:Y(p.v)}));
+      ctx.beginPath(); ctx.moveTo(P[0].x,P[0].y);
+      for(let k=1;k<P.length;k++) ctx.lineTo(P[k].x,P[k].y);
+      ctx.closePath();
+      ctx.fillStyle=hexA(sh.color,.08); ctx.fill();
+      ctx.strokeStyle=sh.color; ctx.stroke();
+      ctx.fillStyle=sh.color; ctx.font='600 10px system-ui';
+      const nm={sym:'Symmetrical',asc:'Ascending',desc:'Descending'}[sh.kind]||'Triangle';
+      ctx.fillText(nm, Math.min(P[0].x,P[1].x,P[2].x)+4, Math.min(P[0].y,P[1].y,P[2].y)-6);
+      ctx.font='10px system-ui';
+      if(sel) for(const p of P) dot(ctx,p.x,p.y,sh.color);
+    }
+  }
+}
+function dot(ctx,x,y,color){ ctx.beginPath(); ctx.arc(x,y,6,0,7); ctx.fillStyle='#fff'; ctx.fill(); ctx.strokeStyle=color; ctx.lineWidth=2; ctx.stroke(); }
+function drawHandles(ctx){
+  const g=S.geom; if(!g||S.selected==null) return;
+  const sh=S.shapes[S.selected]; if(!sh) return;
+  const X=g.X, Y=g.Y, sOf=g.slotOf;
+  const pts = sh.type==='line' ? [sh.p1,sh.p2] : sh.pts;
+  for(const p of pts) dot(ctx, X(sOf(p.t)), Y(p.v), sh.color);
+}
+function hexA(hex,a){
+  const m=hex.replace('#',''); const n=parseInt(m.length===3?m.split('').map(c=>c+c).join(''):m,16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+/* hit testing (pixels) */
+function distPtSeg(px,py,x1,y1,x2,y2){
+  const dx=x2-x1, dy=y2-y1, L2=dx*dx+dy*dy;
+  let t = L2? ((px-x1)*dx+(py-y1)*dy)/L2 : 0; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(px-(x1+t*dx), py-(y1+t*dy));
+}
+function shapeHit(si,px,py){
+  const g=S.geom, sh=S.shapes[si]; if(!g||!sh) return null;
+  const X=g.X, Y=g.Y, sOf=g.slotOf;
+  if(sh.type==='line'){
+    const x1=X(sOf(sh.p1.t)), y1=Y(sh.p1.v), x2=X(sOf(sh.p2.t)), y2=Y(sh.p2.v);
+    if(distPtSeg(px,py,x1,y1,x2,y2)<7) return {kind:'body'};
+    if(Math.hypot(px-x1,py-y1)<10) return {kind:'handle',hi:0};
+    if(Math.hypot(px-x2,py-y2)<10) return {kind:'handle',hi:1};
+  }else{
+    const P=sh.pts.map(p=>({x:X(sOf(p.t)), y:Y(p.v)}));
+    for(let k=0;k<P.length;k++) if(Math.hypot(px-P[k].x,py-P[k].y)<10) return {kind:'handle',hi:k};
+    for(const [a,b] of triEdges(sh.kind))
+      if(distPtSeg(px,py,P[a].x,P[a].y,P[b].x,P[b].y)<7) return {kind:'body'};
+    if(pointInPoly(px,py,P)) return {kind:'body'};
+  }
+  return null;
+}
+function pointInPoly(px,py,P){
+  let inside=false;
+  for(let i=0,j=P.length-1;i<P.length;j=i++){
+    const xi=P[i].x,yi=P[i].y,xj=P[j].x,yj=P[j].y;
+    if(((yi>py)!==(yj>py))&&(px<(xj-xi)*(py-yi)/(yj-yi)+xi)) inside=!inside;
+  }
+  return inside;
+}
+function pxToTV(px,py){
+  const g=S.geom;
+  const slot=(px-g.pad.l)/g.cw-0.5;
+  const t=g.t0+slot*g.tfSec;
+  const v=g.lo+(1-(py-g.pad.t)/(g.H-g.pad.t-g.pad.b))*(g.hi-g.lo);
+  return {t,v,slot};
+}
+function clampTV(tv){
+  const g=S.geom;
+  tv.slot=Math.max(-1,Math.min(2*g.N,tv.slot));
+  tv.t=g.t0+tv.slot*g.tfSec;
+  tv.v=Math.max(g.lo,Math.min(g.hi,tv.v));
+  return tv;
+}
+/* premade triangles — click to drop, drag corners to stretch */
+function placeTriangle(kind,px,py){
+  const g=S.geom; let tv=clampTV(pxToTV(px,py));
+  tv.slot=Math.max(g.N*0.7,Math.min(2*g.N-4,tv.slot)); // default into the draw space
+  const w=Math.max(6,g.N/4), h=(g.hi-g.lo)*0.30;
+  const s=tv.slot, v=tv.v, T=(sl,pr)=>({t:g.t0+sl*g.tfSec, v:pr});
+  let pts;
+  if(kind==='asc'){ pts=[T(s-w/2,v+h/2), T(s+w/2,v+h/2), T(s+w/2,v-h/2)]; }       // flat top
+  else if(kind==='desc'){ pts=[T(s-w/2,v-h/2), T(s+w/2,v-h/2), T(s+w/2,v+h/2)]; } // flat bottom
+  else { pts=[T(s-w/2,v+h/2), T(s-w/2,v-h/2), T(s+w/2,v)]; }                      // symmetrical, apex right
+  pushUndo();
+  S.shapes.push({type:'tri',kind,pts,color:S.color});
+  S.selected=S.shapes.length-1; saveShapes(); drawChart();
+}
+/* ---------------- mouse ---------------- */
+function canvasPos(e){
+  const r=$('chart').getBoundingClientRect();
+  return {x:e.clientX-r.left, y:e.clientY-r.top};
+}
+function topHit(px,py){
+  for(let si=S.shapes.length-1; si>=0; si--){
+    const h=shapeHit(si,px,py);
+    if(h) return {si,hit:h};
+  }
+  return null;
+}
+function bindMouse(){
+  const cv=$('chart');
+  cv.addEventListener('mousedown',(e)=>{
+    if(!S.geom) return;
+    const {x:px,y:py}=canvasPos(e);
+    const tool=S.tool;
+    if(tool==='line'){
+      pushUndo();
+      const tv=clampTV(pxToTV(px,py));
+      S.drag={type:'new-line',si:S.shapes.length};
+      S.shapes.push({type:'line',p1:{t:tv.t,v:tv.v},p2:{t:tv.t,v:tv.v},color:S.color});
+      S.selected=S.shapes.length-1;
+      cv.setPointerCapture(e.pointerId);
+      drawChart(); return;
+    }
+    if(tool.startsWith('tri-')){
+      placeTriangle(tool.slice(4),px,py);
+      setTool('move'); return;
+    }
+    // move / select
+    const h=topHit(px,py);
+    if(h){
+      S.selected=h.si; pushUndo();
+      const g=S.geom;
+      S.drag={type:h.hit.kind==='handle'?'handle':'body', si:h.si, hi:h.hit.hi,
+        startX:px, startY:py,
+        orig:JSON.parse(JSON.stringify(S.shapes[h.si]))};
+      cv.setPointerCapture(e.pointerId);
+    }else{
+      S.selected=null;
+    }
+    drawChart();
+  });
+  cv.addEventListener('mousemove',(e)=>{
+    const {x:px,y:py}=canvasPos(e);
+    if(S.drag&&S.geom){
+      const g=S.geom, sh=S.shapes[S.drag.si];
+      if(S.drag.type==='new-line'){
+        const tv=clampTV(pxToTV(px,py)); sh.p2={t:tv.t,v:tv.v};
+      }else if(S.drag.type==='handle'){
+        const tv=clampTV(pxToTV(px,py));
+        const pt = sh.type==='line' ? (S.drag.hi===0?sh.p1:sh.p2) : sh.pts[S.drag.hi];
+        pt.t=tv.t; pt.v=tv.v;
+      }else if(S.drag.type==='body'){
+        const dx=(px-S.drag.startX)/g.cw*g.tfSec, dv=-(py-S.drag.startY)/(g.H-g.pad.t-g.pad.b)*(g.hi-g.lo);
+        const pts = sh.type==='line' ? [sh.p1,sh.p2] : sh.pts;
+        const o = sh.type==='line' ? [S.drag.orig.p1,S.drag.orig.p2] : S.drag.orig.pts;
+        for(let k=0;k<pts.length;k++){
+          let t=o[k].t+dx, v=o[k].v+dv;
+          t=Math.max(g.t0-g.tfSec,Math.min(g.t0+(2*g.N+1)*g.tfSec,t));
+          v=Math.max(g.lo,Math.min(g.hi,v));
+          pts[k].t=t; pts[k].v=v;
+        }
+      }
+      drawChart(); return;
+    }
+    hoverCursor(px,py); hoverTip(px,py,e);
+  });
+  const endDrag=()=>{ if(S.drag){ S.drag=null; saveShapes(); drawChart(); } };
+  cv.addEventListener('mouseup',endDrag);
+  cv.addEventListener('pointercancel',endDrag);
+  cv.addEventListener('mouseleave',()=>{ $('candleTip').style.display='none'; });
+  document.addEventListener('keydown',(e)=>{
+    if(e.target.tagName==='INPUT') return;
+    if((e.key==='Delete'||e.key==='Backspace')&&S.selected!=null){
+      pushUndo(); S.shapes.splice(S.selected,1); S.selected=null; saveShapes(); drawChart(); e.preventDefault();
+    }
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){ doUndo(); e.preventDefault(); }
+    if(e.key==='Escape'){ S.selected=null; S.drag=null; drawChart(); }
+  });
+}
+function hoverCursor(px,py){
+  const cv=$('chart');
+  if(S.tool==='line'){ cv.style.cursor='crosshair'; return; }
+  if(S.tool.startsWith('tri-')){ cv.style.cursor='copy'; return; }
+  cv.style.cursor = topHit(px,py) ? 'move' : 'crosshair';
+}
+function hoverTip(px,py,e){
+  const tip=$('candleTip'), g=S.geom;
+  if(!g||S.drag){ tip.style.display='none'; return; }
+  const slot=Math.round((px-g.pad.l)/g.cw-0.5);
+  if(slot<0||slot>=g.N||py<g.pad.t||py>g.H-g.pad.b){ tip.style.display='none'; return; }
+  const b=g.bs[slot]; if(!b){ tip.style.display='none'; return; }
+  const up=b.c>=b.o;
+  tip.innerHTML=`<div class="ct-ohlc">${timeLblOf(b.t,S.tf)} PT</div>`+
+    `<div class="ct-ohlc">O ${fmtP(S.symbol,b.o)} · H ${fmtP(S.symbol,b.h)} · L ${fmtP(S.symbol,b.l)} · C <b>${fmtP(S.symbol,b.c)}</b></div>`;
+  tip.style.display='block';
+  const r=$('chart').getBoundingClientRect();
+  tip.style.left=Math.min(px+14, r.width-330)+'px';
+  tip.style.top=Math.max(py-10,4)+'px';
+}
+/* ---------------- toolbar ---------------- */
+function setTool(t){
+  S.tool=t;
+  document.querySelectorAll('#toolbar .tbtn[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
+  hoverCursor(0,0);
+}
+function bindToolbar(){
+  document.querySelectorAll('#toolbar .tbtn[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+  document.querySelectorAll('#toolbar .dotbtn').forEach(b=>b.onclick=()=>{
+    S.color=b.dataset.color;
+    document.querySelectorAll('#toolbar .dotbtn').forEach(x=>x.classList.toggle('on',x===b));
+  });
+  $('undoBtn').onclick=doUndo;
+  $('delBtn').onclick=()=>{ if(S.selected!=null){ pushUndo(); S.shapes.splice(S.selected,1); S.selected=null; saveShapes(); drawChart(); } };
+  $('clearBtn').onclick=()=>{ if(!S.shapes.length) return; pushUndo(); S.shapes=[]; S.selected=null; saveShapes(); drawChart(); };
+}
+/* ---------------- search (with $ prefix support) ---------------- */
+function initSearch(){
+  const inp=$('search'), box=$('searchres');
+  const hide=()=>{ box.style.display='none'; };
+  inp.addEventListener('input',()=>{
+    const q=inp.value.trim().toLowerCase().replace(/^\$/,'');
+    if(q.length<1){ hide(); return; }
+    const hits=[];
+    for(const [id,s] of Object.entries(S.data.symbols)){
+      if(id.toLowerCase().includes(q)||s.name.toLowerCase().includes(q)) hits.push([id,s]);
+      if(hits.length>=12) break;
+    }
+    if(!hits.length){ hide(); return; }
+    box.innerHTML='';
+    for(const [id,s] of hits){
+      const d=document.createElement('div');
+      d.innerHTML=`<span class="sym">${id}</span><span class="nm">${s.name} · ${s.market}</span>`;
+      d.onclick=()=>{ selectSymbol(id); inp.value=''; hide(); };
+      box.appendChild(d);
+    }
+    box.style.display='block';
+  });
+  inp.addEventListener('keydown',(e)=>{ if(e.key==='Escape') hide(); });
+  document.addEventListener('click',(e)=>{ if(!e.target.closest('.searchwrap')) hide(); });
+}
+/* ---------------- boot ---------------- */
+window.addEventListener('resize',()=>drawChart());
+bindMouse(); bindToolbar(); initSearch();
+loadData().catch((err)=>{ $('asof').textContent='data unavailable'; });
+setInterval(()=>{ if(S.market==='crypto'){ refreshCryptoLive(); refreshKalshiTarget(); } },60000);
+</script>
+</body>
+</html>
