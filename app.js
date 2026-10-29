@@ -4,12 +4,12 @@
 const DATA_URL = 'https://raw.githubusercontent.com/MisoPrettyStacks/chartlens/data/bars.json';
 const $ = (id) => document.getElementById(id);
 const state = { data: null, market: 'crypto', symbol: 'BTC-USD', tf: '15m', mode: 'scalp', bars: [],
-  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, lastPrice: null, _hoverI: null, _geom: null,
+  liveBars: [], view: { n: null, off: 0 }, lastDraw: 0, wsLive: false, kalshi: { sym: null, t0: null, v: null }, lastPrice: null, _hoverI: null, _geom: null,
   showTriangles: (() => { try { return localStorage.getItem('chartlens.triangles') === '1'; } catch { return false; } })(), _tri: null, _triHover: false };
 const TFSEC = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '6h': 21600, '12h': 43200, '1d': 86400 };
 const defaultN = (tf) => tf === '1m' ? 120 : tf === '5m' ? 120 : tf === '15m' ? 96 : tf === '1h' ? 120 : tf === '6h' ? 120 : tf === '12h' ? 120 : 180;
 
-const DECIMALS = { 'BTC-USD': 2, 'ETH-USD': 2, 'XRP-USD': 4, 'SOL-USD': 2, 'EURUSD=X': 5, 'GBPUSD=X': 5, 'USDJPY=X': 3 };
+const DECIMALS = { 'BTC-USD': 2, 'ETH-USD': 2, 'XRP-USD': 4, 'SOL-USD': 2, 'EURUSD=X': 5, 'GBPUSD=X': 5, 'USDJPY=X': 3, 'CL=F': 2 };
 const dec = (s) => DECIMALS[s] ?? 2;
 const fmtP = (s, v) => v == null || !isFinite(v) ? '—' : v.toFixed(dec(s));
 // bottom-axis time label (bar open time, Pacific) — shared by gridlines + labels
@@ -36,7 +36,7 @@ function symbolsOf(market) {
 }
 function buildMarkets() {
   const mk = $('markets'); mk.innerHTML = '';
-  for (const m of ['crypto', 'stocks', 'forex']) {
+  for (const m of ['crypto', 'stocks', 'forex', 'commodities']) {
     const b = document.createElement('button');
     b.textContent = m[0].toUpperCase() + m.slice(1);
     b.className = state.market === m ? 'on' : '';
@@ -144,6 +144,34 @@ async function refreshCryptoLive() {
     const last = bars[bars.length - 1];
     state.lastPrice = last.c;
     $('pxpill').innerHTML = `${s.name} <b>${fmtP(state.symbol, last.c)}</b>`;
+  } catch {}
+}
+
+/* Kalshi target (black dashed line): the current 15-min window's reference
+   price. Kalshi's API blocks browser origins, so — same as the arena pages —
+   it's the typical price (h+l+c)/3 of the Coinbase 1-minute bar in the minute
+   before the window opened, standing in for Kalshi's 60-second average. */
+const KALSHI_SYMS = ['BTC-USD', 'ETH-USD', 'XRP-USD', 'SOL-USD'];
+async function refreshKalshiTarget() {
+  const sym = state.symbol;
+  if (!KALSHI_SYMS.includes(sym)) { state.kalshi = { sym: null, t0: null, v: null }; return; }
+  const t0 = Math.floor(Date.now() / 1000 / 900) * 900;
+  // cache is keyed on SYMBOL + window — a stale target from another symbol
+  // would nuke the price scale (e.g. BTC's ~$81k on XRP's $1.30 chart)
+  if (state.kalshi.sym === sym && state.kalshi.t0 === t0 && state.kalshi.v != null) return;
+  state.kalshi = { sym, t0, v: null }; // clear the old symbol's target right away
+  if (state.liveBars.length) drawChart(state.liveBars, analyze(state.liveBars, state.mode));
+  try {
+    const r = await fetch(`https://api.exchange.coinbase.com/products/${sym}/candles?granularity=60`);
+    if (!r.ok) return;
+    const raw = await r.json();
+    if (!Array.isArray(raw)) return;
+    const bar = raw.find(([t]) => t === t0 - 60);
+    if (!bar) return;
+    const [, l, h, , c] = bar;
+    if (state.symbol !== sym) return; // switched away mid-fetch — don't paint a stale target
+    state.kalshi = { sym, t0, v: (h + l + c) / 3 };
+    if (state.liveBars.length) drawChart(state.liveBars, analyze(state.liveBars, state.mode));
   } catch {}
 }
 
@@ -465,6 +493,8 @@ function drawChart(bars, sig) {
     if (sig.levels) for (const s of sig.levels.sup) zones.push({ v: s, c: '#16a34a', dash: [2, 4], label: '' });
     zones.push({ v: sig.entry, c: '#4f46e5', dash: [], label: 'ENTRY' });
   }
+  if (state.kalshi && state.kalshi.sym === state.symbol && state.kalshi.v != null)
+    zones.push({ v: state.kalshi.v, c: '#111111', dash: [7, 5], label: 'KALSHI TARGET' });
   // live price line (blue dashed): latest streamed trade, falls back to last close
   const liveV = state.lastPrice != null ? state.lastPrice : (bs.length ? bs[bs.length - 1].c : null);
   if (liveV != null) zones.push({ v: liveV, c: '#2563eb', dash: [4, 3], label: 'LIVE' });
@@ -643,6 +673,7 @@ function drawChart(bars, sig) {
   const isLive = state.wsLive && state.data.symbols[state.symbol]?.market === 'crypto';
   $('spanpill').textContent = `${state.symbol} · ${state.tf} · ${isLive ? '● LIVE' : 'delayed ~15 min'} · scroll to zoom, drag to pan, double-click to reset, hover a candle for a plain-English read`;
   $('legend').innerHTML = `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span><span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span><span><b style="color:#16a34a">—</b> support/target</span><span><b style="color:#dc2626">—</b> resistance/stop</span>` +
+    ((state.kalshi && state.kalshi.sym === state.symbol && state.kalshi.v != null) ? `<span><b style="color:#111">- -</b> Kalshi target</span>` : ``) +
     (liveV != null ? `<span><b style="color:#2563eb">- -</b> live price</span>` : ``) +
     (tri ? `<span><b style="color:#7c3aed">—</b> triangle pattern</span>` : ``);
 }
@@ -942,6 +973,7 @@ function renderFeed() {
   }).join('');
 }
 function render() {
+  refreshKalshiTarget();
   state.bars = getBars();
   state.liveBars = state.bars.map((b) => ({ ...b }));
   state.view = { n: null, off: 0 };
@@ -1159,7 +1191,7 @@ if (triBtn) {
 }
 window.addEventListener('resize', () => drawChart(state.liveBars, analyze(state.liveBars, state.mode)));
 (async () => {
-  try { await loadData(); connectWS(); jRender(); setInterval(pollData, 60000); setInterval(refreshCryptoLive, 60000); }
+  try { await loadData(); connectWS(); jRender(); setInterval(pollData, 60000); setInterval(refreshCryptoLive, 60000); setInterval(refreshKalshiTarget, 60000); }
   catch (e) { $('asof').textContent = 'waiting for first data publish…'; }
 })();
 // Poll for a fresh publish every 60s; rebase silently (keeps zoom) when it arrives.

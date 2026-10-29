@@ -59,6 +59,8 @@ const SYMBOLS = [
   { id: 'EURUSD=X', market: 'forex', name: 'EUR / USD', src: 'yahoo', tfs: CORE_TFS },
   { id: 'GBPUSD=X', market: 'forex', name: 'GBP / USD', src: 'yahoo', tfs: CORE_TFS },
   { id: 'USDJPY=X', market: 'forex', name: 'USD / JPY', src: 'yahoo', tfs: CORE_TFS },
+  // commodities — Yahoo Finance
+  { id: 'CL=F', market: 'commodities', name: 'WTI crude oil', src: 'yahoo', tfs: CORE_TFS },
 ];
 
 const TFDEF = {
