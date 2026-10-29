@@ -106,6 +106,7 @@ body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui
     <div class="toolbar" id="toolbar">
       <span class="lbl">Draw:</span>
       <button class="tbtn" data-tool="line" title="Drag on the chart to draw a line">✏️ Line</button>
+      <button class="tbtn" data-tool="freehand" title="Drag on the chart to draw freehand">✍️ Freehand</button>
       <button class="tbtn" data-tool="tri-sym" title="Click the chart to drop a symmetrical triangle, then drag its corners">△ Sym</button>
       <button class="tbtn" data-tool="tri-asc" title="Click the chart to drop an ascending triangle, then drag its corners">△ Asc</button>
       <button class="tbtn" data-tool="tri-desc" title="Click the chart to drop a descending triangle, then drag its corners">△ Desc</button>
@@ -586,7 +587,7 @@ function drawChart(){
     `<span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span>`+
     `<span><b style="color:#16a34a">—</b> support/target</span>`+
     `<span><b style="color:#dc2626">—</b> resistance/stop</span>`+
-    `<span class="muted">Line: drag to draw · Triangle: click to drop, drag corners to stretch · Select: move shapes · Del deletes · Ctrl+Z undo · scroll to zoom, double-click resets</span>`;
+    `<span class="muted">Line: drag to draw · Freehand: drag to scribble · Triangle: click to drop, drag corners to stretch · Select: move shapes · Del deletes · Ctrl+Z undo · scroll to zoom, double-click resets</span>`;
 }
 
 /* ---------------- drawings ---------------- */
@@ -656,6 +657,12 @@ function drawShapes(ctx){
       ctx.fillText(nm, Math.min(P[0].x,P[1].x,P[2].x)+4, Math.min(P[0].y,P[1].y,P[2].y)-6);
       ctx.font='10px system-ui';
       if(sel) for(const p of P) dot(ctx,p.x,p.y,sh.color);
+    }else if(sh.type==='free'){
+      const P=sh.pts.map(p=>({x:X(sOf(p.t)), y:Y(p.v)}));
+      if(P.length<2) continue;
+      ctx.beginPath(); ctx.moveTo(P[0].x,P[0].y);
+      for(let k=1;k<P.length;k++) ctx.lineTo(P[k].x,P[k].y);
+      ctx.stroke();
     }
   }
 }
@@ -663,6 +670,7 @@ function dot(ctx,x,y,color){ ctx.beginPath(); ctx.arc(x,y,6,0,7); ctx.fillStyle=
 function drawHandles(ctx){
   const g=S.geom; if(!g||S.selected==null) return;
   const sh=S.shapes[S.selected]; if(!sh) return;
+  if(sh.type==='free') return; // freehand strokes have no corner handles
   const X=g.X, Y=g.Y, sOf=g.slotOf;
   const pts = sh.type==='line' ? [sh.p1,sh.p2] : sh.pts;
   for(const p of pts) dot(ctx, X(sOf(p.t)), Y(p.v), sh.color);
@@ -685,6 +693,10 @@ function shapeHit(si,px,py){
     if(distPtSeg(px,py,x1,y1,x2,y2)<7) return {kind:'body'};
     if(Math.hypot(px-x1,py-y1)<10) return {kind:'handle',hi:0};
     if(Math.hypot(px-x2,py-y2)<10) return {kind:'handle',hi:1};
+  }else if(sh.type==='free'){
+    const P=sh.pts.map(p=>({x:X(sOf(p.t)), y:Y(p.v)}));
+    for(let k=1;k<P.length;k++)
+      if(distPtSeg(px,py,P[k-1].x,P[k-1].y,P[k].x,P[k].y)<7) return {kind:'body'};
   }else{
     const P=sh.pts.map(p=>({x:X(sOf(p.t)), y:Y(p.v)}));
     for(let k=0;k<P.length;k++) if(Math.hypot(px-P[k].x,py-P[k].y)<10) return {kind:'handle',hi:k};
@@ -772,6 +784,15 @@ function bindMouse(){
       cv.setPointerCapture(e.pointerId);
       drawChart(); return;
     }
+    if(tool==='freehand'){
+      pushUndo();
+      const tv=clampTV(pxToTV(px,py));
+      S.drag={type:'draw-free',si:S.shapes.length,lx:px,ly:py};
+      S.shapes.push({type:'free',pts:[{t:tv.t,v:tv.v}],color:S.color});
+      S.selected=S.shapes.length-1;
+      cv.setPointerCapture(e.pointerId);
+      drawChart(); return;
+    }
     if(tool.startsWith('tri-')){
       placeTriangle(tool.slice(4),px,py);
       setTool('move'); return;
@@ -796,6 +817,12 @@ function bindMouse(){
       const g=S.geom, sh=S.shapes[S.drag.si];
       if(S.drag.type==='new-line'){
         const tv=clampTV(pxToTV(px,py)); sh.p2={t:tv.t,v:tv.v};
+      }else if(S.drag.type==='draw-free'){
+        if(Math.hypot(px-S.drag.lx,py-S.drag.ly)>=4){
+          const tv=clampTV(pxToTV(px,py));
+          sh.pts.push({t:tv.t,v:tv.v});
+          S.drag.lx=px; S.drag.ly=py;
+        }
       }else if(S.drag.type==='handle'){
         const tv=clampTV(pxToTV(px,py));
         const pt = sh.type==='line' ? (S.drag.hi===0?sh.p1:sh.p2) : sh.pts[S.drag.hi];
@@ -815,7 +842,16 @@ function bindMouse(){
     }
     hoverCursor(px,py); hoverTip(px,py,e);
   });
-  const endDrag=()=>{ if(S.drag){ S.drag=null; saveShapes(); drawChart(); } };
+  const endDrag=()=>{
+    if(S.drag){
+      // a freehand tap without a drag leaves no stroke
+      if(S.drag.type==='draw-free'){
+        const sh=S.shapes[S.drag.si];
+        if(sh&&(!sh.pts||sh.pts.length<2)){ S.shapes.splice(S.drag.si,1); S.selected=null; }
+      }
+      S.drag=null; saveShapes(); drawChart();
+    }
+  };
   cv.addEventListener('mouseup',endDrag);
   cv.addEventListener('pointercancel',endDrag);
   cv.addEventListener('mouseleave',()=>{ $('candleTip').style.display='none'; });
@@ -831,6 +867,7 @@ function bindMouse(){
 function hoverCursor(px,py){
   const cv=$('chart');
   if(S.tool==='line'){ cv.style.cursor='crosshair'; return; }
+  if(S.tool==='freehand'){ cv.style.cursor='crosshair'; return; }
   if(S.tool.startsWith('tri-')){ cv.style.cursor='copy'; return; }
   cv.style.cursor = topHit(px,py) ? 'move' : 'crosshair';
 }
