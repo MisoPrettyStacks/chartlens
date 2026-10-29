@@ -125,7 +125,7 @@ body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui
       <span class="sep"></span>
       <button class="tbtn" id="undoBtn" title="Undo last change (Ctrl+Z)">↶ Undo</button>
       <button class="tbtn" id="delBtn" title="Delete the selected shape (Del)">🗑 Delete</button>
-      <button class="tbtn" id="clearBtn" title="Remove all drawings on this symbol + timeframe">✕ Clear all</button>
+      <button class="tbtn" id="clearBtn" title="Remove all drawings on this symbol">✕ Clear all</button>
     </div>
     <div class="chartwrap"><canvas id="chart"></canvas><span class="spanpill" id="spanpill"></span><div id="candleTip" aria-hidden="true"></div></div>
     <div class="legend" id="legend"></div>
@@ -583,9 +583,28 @@ function drawChart(){
 }
 
 /* ---------------- drawings ---------------- */
-function shapeKey(){ return 'chartlens-sketch.'+S.symbol+'.'+S.tf; }
+/* Drawings live per symbol, not per timeframe: points are stored as {t, v}
+   (timestamp + price), so a triangle drawn on 15m lands in the right place
+   on 1h too. Switching timeframes keeps everything until Clear all. */
+function shapeKey(){ return 'chartlens-sketch.'+S.symbol; }
 function loadShapes(){
-  try{ const all=JSON.parse(localStorage.getItem('chartlens-sketch')||'{}'); S.shapes=all[shapeKey()]||[]; }
+  try{
+    const all=JSON.parse(localStorage.getItem('chartlens-sketch')||'{}');
+    let shapes=all[shapeKey()];
+    if(!shapes){
+      // one-time migration: merge drawings saved under the old per-timeframe keys
+      shapes=[];
+      const seen=new Set(), prefix='chartlens-sketch.'+S.symbol+'.';
+      for(const k of Object.keys(all)){
+        if(k.indexOf(prefix)===0&&Array.isArray(all[k])){
+          for(const s of all[k]){ const j=JSON.stringify(s); if(!seen.has(j)){ seen.add(j); shapes.push(s); } }
+          delete all[k];
+        }
+      }
+      if(shapes.length){ all[shapeKey()]=shapes; localStorage.setItem('chartlens-sketch',JSON.stringify(all)); }
+    }
+    S.shapes=shapes||[];
+  }
   catch{ S.shapes=[]; }
   S.selected=null; S.undoStack=[];
 }
