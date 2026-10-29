@@ -88,6 +88,7 @@ body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui
   <div class="pills">
     <div class="livepill"><span class="dot"></span><span id="asof">connecting…</span></div>
     <div class="livepill" id="pxpill">—</div>
+    <div class="livepill" id="sigpill" title="Current rule-engine bias on this timeframe — descriptive, not advice">—</div>
   </div>
 </header>
 
@@ -653,6 +654,14 @@ function drawChart(){
   /* pills + legend */
   const s=S.data.symbols[S.symbol];
   $('spanpill').textContent = bs.length+' candles · '+(S.market==='crypto'?'live':'delayed ~15 min');
+  /* current rule-engine signal — refreshes on every redraw, so a fresh BUY/SELL shows the moment it fires */
+  let sigHtml='—';
+  if(sig&&!sig.error){
+    if(sig.bias==='LONG') sigHtml='<b style="color:#16a34a">▲ BUY</b> <span class="muted">+'+sig.score+'</span>';
+    else if(sig.bias==='SHORT') sigHtml='<b style="color:#dc2626">▼ SELL</b> <span class="muted">'+sig.score+'</span>';
+    else sigHtml='<span class="muted">NEUTRAL</span> <span class="muted">'+sig.score+'</span>';
+  }
+  $('sigpill').innerHTML=sigHtml;
   $('legend').innerHTML =
     `<span><b style="color:#f59e0b">—</b> EMA12</span><span><b style="color:#4f46e5">—</b> EMA26</span>`+
     (S.kalshi.v!=null?`<span><b style="color:#111">- -</b> Kalshi target</span>`:'')+
