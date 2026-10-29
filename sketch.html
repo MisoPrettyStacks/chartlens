@@ -116,6 +116,10 @@ body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui
       <button class="tbtn on" id="markersBtn" title="BUY/SELL signal markers">Markers</button>
       <button class="tbtn on" id="coneBtn" title="ATR volatility cone into the drawing space">ATR cone</button>
       <span class="sep"></span>
+      <span class="lbl">Zoom:</span>
+      <button class="tbtn" id="zoomOutBtn" title="Zoom out — show more candles">－</button>
+      <button class="tbtn" id="zoomInBtn" title="Zoom in — show fewer candles">＋</button>
+      <span class="sep"></span>
       <span class="lbl">Color:</span>
       <button class="dotbtn on" data-color="#2563eb" style="background:#2563eb" title="blue"></button>
       <button class="dotbtn" data-color="#111111" style="background:#111111" title="black"></button>
@@ -140,7 +144,7 @@ const $ = (id) => document.getElementById(id);
 const S = { data:null, market:'crypto', symbol:'BTC-USD', tf:'15m', bars:[],
   kalshi:{sym:null,t0:null,v:null}, lastPrice:null, wsLive:false,
   shapes:[], tool:'move', color:'#2563eb', selected:null, drag:null, undoStack:[],
-  geom:null, _hoverI:null, _raf:false, _ws:null,
+  geom:null, _hoverI:null, _raf:false, _ws:null, view:{n:null,off:0},
   auto:{tri:true, markers:true, cone:true} };
 const TFSEC = { '1m':60, '5m':300, '15m':900, '1h':3600, '6h':21600, '12h':43200, '1d':86400 };
 const defaultN = (tf) => tf==='1m'?120 : tf==='5m'?120 : tf==='15m'?96 : tf==='1h'?120 : tf==='6h'?120 : tf==='12h'?120 : 180;
@@ -196,6 +200,7 @@ function buildTfs(){
 }
 function selectSymbol(id){
   S.symbol=id; S.market=S.data.symbols[id].market;
+  S.view={n:null,off:0};
   S.kalshi={sym:null,t0:null,v:null}; S.lastPrice=null; S.selected=null; S.drag=null;
   loadShapes(); buildMarkets(); buildSyms(); buildTfs();
   const s=S.data.symbols[id];
@@ -421,9 +426,11 @@ function drawChart(){
   if(!bars.length){ ctx.fillStyle='#6b768c'; ctx.font='13px system-ui'; ctx.fillText('No data for this symbol/timeframe yet.',20,40); return; }
   const tfSec=TFSEC[S.tf]||900;
   const maxN=bars.length;
-  const N=Math.max(30,Math.min(defaultN(S.tf),maxN)); // candles
+  const nView=S.view.n||defaultN(S.tf);
+  const N=Math.max(30,Math.min(nView,maxN)); // visible candles (zoom)
+  const off=Math.max(0,Math.min(S.view.off||0,maxN-N));
   const F=N;                                          // blank draw slots — exactly half the space
-  const bs=bars.slice(maxN-N);
+  const bs=bars.slice(maxN-N-off,maxN-off);
   const pad={l:8,r:64,t:10,b:44};
   let lo=Infinity, hi=-Infinity;
   for(const b of bs){ lo=Math.min(lo,b.l); hi=Math.max(hi,b.h); }
@@ -579,7 +586,7 @@ function drawChart(){
     `<span><b style="color:rgba(79,70,229,.45)">- -</b> ATR cone</span>`+
     `<span><b style="color:#16a34a">—</b> support/target</span>`+
     `<span><b style="color:#dc2626">—</b> resistance/stop</span>`+
-    `<span class="muted">Line: drag to draw · Triangle: click to drop, drag corners to stretch · Select: move shapes · Del deletes · Ctrl+Z undo</span>`;
+    `<span class="muted">Line: drag to draw · Triangle: click to drop, drag corners to stretch · Select: move shapes · Del deletes · Ctrl+Z undo · scroll to zoom, double-click resets</span>`;
 }
 
 /* ---------------- drawings ---------------- */
@@ -737,6 +744,21 @@ function topHit(px,py){
 }
 function bindMouse(){
   const cv=$('chart');
+  /* zoom: mouse wheel, ＋/－ buttons, double-click resets */
+  const doZoom=(dir)=>{
+    if(!S.bars.length) return;
+    const cur=S.view.n||defaultN(S.tf);
+    const next=Math.round(dir>0?cur/1.25:cur*1.25);
+    S.view.n=Math.max(30,Math.min(S.bars.length,next));
+    drawChart();
+  };
+  cv.addEventListener('wheel',(e)=>{
+    e.preventDefault();
+    doZoom(e.deltaY<0?1:-1);
+  },{passive:false});
+  cv.addEventListener('dblclick',()=>{ S.view={n:null,off:0}; drawChart(); });
+  $('zoomInBtn').onclick=()=>doZoom(1);
+  $('zoomOutBtn').onclick=()=>doZoom(-1);
   cv.addEventListener('mousedown',(e)=>{
     if(!S.geom) return;
     const {x:px,y:py}=canvasPos(e);
